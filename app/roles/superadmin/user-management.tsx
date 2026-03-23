@@ -10,7 +10,7 @@ import {
   FlatList,
   Alert,
   Switch,
-  ActivityIndicator,
+  ActivityIndicator,Platform,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { api } from "@/lib/api";
@@ -127,52 +127,52 @@ export default function UserManagement() {
   };
 
   const startAdd = () => { reset(); setOpen(true); };
-  const startEdit = async (u: User) => {
-    setEdit(u);
-    setOpen(true);
-    try {
-      const res = await getUserApi(u.id);
-      setName(res.name); setEmail(res.email);
-      setRole(toUiRole(res.role)); setStatus(res.status);
-      setCurrency(res.currency ?? "");
-      setBaseSalary(res.baseSalary != null ? String(res.baseSalary) : "");
-      setPayFrequency(res.payFrequency ?? "");
-      setEmploymentType(res.employmentType ?? "");
-      setVat(res.vat != null ? String(res.vat) : "");
-      setEffectiveFrom(fmtDate(res.effectiveFrom));
-      setOtEligible(!!res.otEligible);
-      setOtRate(res.otRate != null ? String(res.otRate) : "");
-      setAllowances(res.allowances != null ? String(res.allowances) : "");
-      setDeductions(res.deductions != null ? String(res.deductions) : "");
-      setTaxId(res.taxId ?? "");
-      setBankHolder(res.bank?.holder ?? "");
-      setBankAccount(res.bank?.account ?? "");
-      setBankName(res.bank?.bankName ?? "");
-      setIfsc(res.bank?.ifsc ?? "");
-      setNotes(res.notes ?? "");
-      setPassword("");
-    } catch (e: any) {
-      Alert.alert("Load user failed", e.message || "Unknown error");
-    }
-  };
+const startEdit = (u: User) => {
+  setEdit(u);
+  setOpen(true);
+
+  setName(u.name);
+  setEmail(u.email);
+  setRole(u.role);
+  setStatus(u.status);
+
+  // keep payroll/bank fields empty by default when editing
+  setCurrency(""); setBaseSalary(""); setPayFrequency(""); setEmploymentType("");
+  setVat(""); setEffectiveFrom(""); setOtEligible(false); setOtRate("");
+  setAllowances(""); setDeductions(""); setTaxId("");
+  setBankHolder(""); setBankAccount(""); setBankName(""); setIfsc("");
+  setNotes("");
+  setPassword("");
+};
+
 
   /* ------------ API helpers ------------ */
-  const loadUsers = async () => {
-    setUsersLoading(true);
-    try {
-      const res = await api.get<{
-        items: Array<{ id: string; name: string; email: string; role: ApiRole; status: "Active" | "Inactive" }>;
-      }>("/api/admin/users");
-      setUsers((res.items || []).map(u => ({
-        id: u.id, name: u.name, email: u.email, role: toUiRole(u.role), status: u.status,
-      })));
-    } catch (e: any) {
-      Alert.alert("Could not load users", e.message || "Unknown error");
-      // setUsers(seed); // optional fallback
-    } finally {
-      setUsersLoading(false);
-    }
-  };
+const loadUsers = async () => {
+  setUsersLoading(true);
+  try {
+    const res = await api.get<any>("/api/admin/users");
+
+    // Accept either { users: [...] } or { items: [...] }
+    const raw = res?.users ?? res?.items ?? [];
+
+    const normalized = raw.map((u: any) => ({
+      id: u._id ?? u.id,
+      name: u.name,
+      email: u.email,
+      role: toUiRole(u.role), // backend returns api role
+      status:
+        (typeof u.disabled === "boolean"
+          ? (u.disabled ? "Inactive" : "Active")
+          : u.status) || "Active",
+    }));
+
+    setUsers(normalized);
+  } catch (e: any) {
+    Alert.alert("Could not load users", e.message || "Unknown error");
+  } finally {
+    setUsersLoading(false);
+  }
+};
 
   const loadRequests = async () => {
     setReqLoading(true);
@@ -230,21 +230,22 @@ export default function UserManagement() {
   
   
 
-  const patchUserApi = async (
-    id: string,
-    body: Partial<{
-      name: string; email: string; role: ApiRole; disabled: boolean;
-      currency: "THB" | "INR" | "USD";
-      baseSalary: number; payFrequency: "Monthly" | "Weekly" | "Daily" | "Hourly";
-      employmentType: "Full-time" | "Part-time" | "Contract" | "Gig / On-demand";
-      vat: number; effectiveFrom: string; otEligible: boolean; otRate: number;
-      allowances: number; deductions: number; taxId: string;
-      bank: { holder?: string; account?: string; bankName?: string; ifsc?: string };
-      notes: string;
-    }>
-  ) => api.patch<{ ok: true; user: { id: string; name: string; email: string; role: ApiRole; status: "Active" | "Inactive" } }>(
-      `/api/admin/users/${id}`, body
-    );
+const patchUserApi = async (
+  id: string,
+  body: Partial<{
+    name: string; email: string; role: ApiRole; disabled: boolean;
+    currency: "THB" | "INR" | "USD";
+    baseSalary: number; payFrequency: "Monthly" | "Weekly" | "Daily" | "Hourly";
+    employmentType: "Full-time" | "Part-time" | "Contract" | "Gig / On-demand";
+    vat: number; effectiveFrom: string; otEligible: boolean; otRate: number;
+    allowances: number; deductions: number; taxId: string;
+    bank: { holder?: string; account?: string; bankName?: string; ifsc?: string };
+    notes: string;
+  }>
+) => api.patch<{ user: { _id: string; name: string; email: string; role: ApiRole; disabled?: boolean } }>(
+  `/api/admin/users/${id}`, body
+);
+
 
   const deleteUserApi = async (id: string) =>
     api.delete<{ ok: true }>(`/api/admin/users/${id}`);
@@ -277,20 +278,20 @@ export default function UserManagement() {
     return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
   };
 
-  const createUserApi = async (body: {
-    name: string; email: string; role: ApiRole; password: string;
-    currency?: "THB" | "INR" | "USD";
-    baseSalary?: number; payFrequency?: "Monthly" | "Weekly" | "Daily" | "Hourly";
-    employmentType?: "Full-time" | "Part-time" | "Contract" | "Gig / On-demand";
-    vat?: number; effectiveFrom?: string; otEligible?: boolean; otRate?: number;
-    allowances?: number; deductions?: number; taxId?: string;
-    bank?: { holder?: string; account?: string; bankName?: string; ifsc?: string };
-    notes?: string;
-  }) =>
-    api.post<{ ok: true; user: { id: string; name: string; email: string; role: ApiRole; status: "Active" | "Inactive" } }>(
-      "/api/admin/users",
-      body
-    );
+const createUserApi = async (body: {
+  name: string; email: string; role: ApiRole; password: string;
+  currency?: "THB" | "INR" | "USD";
+  baseSalary?: number; payFrequency?: "Monthly" | "Weekly" | "Daily" | "Hourly";
+  employmentType?: "Full-time" | "Part-time" | "Contract" | "Gig / On-demand";
+  vat?: number; effectiveFrom?: string; otEligible?: boolean; otRate?: number;
+  allowances?: number; deductions?: number; taxId?: string;
+  bank?: { holder?: string; account?: string; bankName?: string; ifsc?: string };
+  notes?: string;
+}) =>
+  api.post<{
+    user: { _id: string; name: string; email: string; role: ApiRole; disabled?: boolean };
+  }>("/api/admin/users", body);
+
 
   const toNumber = (v: string): number | undefined => {
     if (v == null) return undefined;
@@ -348,13 +349,20 @@ export default function UserManagement() {
           disabled: status === "Inactive",
           ...buildPayrollPayload(),
         });
-        setUsers(arr =>
-          arr.map(x =>
-            x.id === editing.id
-              ? { ...x, name: res.user.name, email: res.user.email, role: toUiRole(res.user.role), status: res.user.status }
-              : x
-          )
-        );
+     setUsers(arr =>
+  arr.map(x =>
+    x.id === editing.id
+      ? {
+          ...x,
+          name: res.user.name,
+          email: res.user.email,
+          role: toUiRole(res.user.role),
+          status: res.user.disabled ? "Inactive" : "Active",
+        }
+      : x
+  )
+);
+
         setOpen(false);
         reset();
         return;
@@ -372,7 +380,14 @@ export default function UserManagement() {
     try {
       const res = await createUserApi({ name, email, role: toApiRole(role), password, ...buildPayrollPayload() });
       // Prepend new user
-      setUsers(arr => [{ id: res.user.id, name: res.user.name, email: res.user.email, role: toUiRole(res.user.role), status: res.user.status }, ...arr]);
+     setUsers(arr => [{
+  id: res.user._id,
+  name: res.user.name,
+  email: res.user.email,
+  role: toUiRole(res.user.role),
+  status: res.user.disabled ? "Inactive" : "Active",
+}, ...arr]);
+
       setOpen(false);
       reset();
     } catch (e: any) {
@@ -381,27 +396,45 @@ export default function UserManagement() {
   };
 
   /* ------------ Delete ------------ */
-  const confirmDelete = (u: User) => {
-    Alert.alert(
-      "Delete user",
-      `Delete ${u.name}?`,
-      [
-        { text: "Cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteUserApi(u.id);
-              setUsers(arr => arr.filter(x => x.id !== u.id));
-            } catch (e: any) {
-              Alert.alert("Delete failed", e.message || "Unknown error");
-            }
-          },
+// REPLACE your current confirmDelete with this one
+const confirmDelete = (u: User) => {
+  if (Platform.OS === "web") {
+    // Web: use native confirm (RN Alert buttons don't work reliably on web)
+    const ok = window.confirm(`Delete ${u.name}?`);
+    if (!ok) return;
+    (async () => {
+      try {
+        await deleteUserApi(u.id);
+        setUsers(arr => arr.filter(x => x.id !== u.id));
+      } catch (e: any) {
+        alert(`Delete failed: ${e?.message || "Unknown error"}`);
+      }
+    })();
+    return;
+  }
+
+  // iOS/Android: use RN Alert with buttons
+  Alert.alert(
+    "Delete user",
+    `Delete ${u.name}?`,
+    [
+      { text: "Cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteUserApi(u.id);
+            setUsers(arr => arr.filter(x => x.id !== u.id));
+          } catch (e: any) {
+            Alert.alert("Delete failed", e.message || "Unknown error");
+          }
         },
-      ]
-    );
-  };
+      },
+    ]
+  );
+};
+
 
   /* ------------ Initial load ------------ */
   useEffect(() => {
@@ -882,23 +915,124 @@ type SelectProps = {
 };
 
 const Select = ({ placeholder, value, options, onChange, allowClear }: SelectProps) => {
+  const [open, setOpen] = useState(false);
+
+  const openMenu = () => {
+    // 1) Blur the trigger so focus isn't left in an aria-hidden subtree on web
+    if (Platform.OS === "web") {
+      try {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      } catch {}
+    }
+    setOpen(true);
+  };
+
   return (
-    <View style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10 }}>
-      <Pressable
-        onPress={() => {
-          // Fallback: simple ActionSheet-like prompt using Alert with quick choices
-          const buttons = [
-            ...options.map((opt) => ({ text: opt, onPress: () => onChange(opt) })),
-            ...(allowClear ? [{ text: "Clear", onPress: () => onChange("") }] : []),
-            { text: "Cancel", style: "cancel" as const },
-          ];
-          Alert.alert(placeholder || "Select", "", buttons);
-        }}
-        style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+    <>
+      <View style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10 }}>
+        <Pressable
+          onPress={openMenu}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={{ color: value ? "#111827" : "#6b7280" }}>
+            {value || placeholder || "Select"}
+          </Text>
+          <Feather name="chevron-down" size={16} color="#6b7280" />
+        </Pressable>
+      </View>
+
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpen(false)}
+        // RNW already sets aria-hidden on background; we just manage focus.
       >
-        <Text style={{ color: value ? "#111827" : "#6b7280" }}>{value || placeholder || "Select"}</Text>
-        <Feather name="chevron-down" size={16} color="#6b7280" />
-      </Pressable>
-    </View>
+        <Pressable
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.35)" }}
+          onPress={() => setOpen(false)}
+          accessible={false}
+        >
+          <View
+            style={{
+              marginHorizontal: 24,
+              marginTop: Platform.OS === "web" ? 80 : 120,
+              backgroundColor: "#fff",
+              borderRadius: 12,
+              padding: 12,
+              gap: 4,
+            }}
+            // 2) Immediately place focus inside the modal
+            //    A tiny, visually-hidden input is a reliable cross-platform target.
+          >
+            <TextInput
+              autoFocus
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0 }}
+              accessibilityElementsHidden // keep it out of the a11y tree
+              importantForAccessibility="no-hide-descendants"
+            />
+
+            <Text style={{ fontWeight: "700", marginBottom: 8 }}>
+              {placeholder || "Select"}
+            </Text>
+
+            {allowClear && (
+              <Pressable
+                onPress={() => {
+                  onChange("");
+                  setOpen(false);
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: "#6b7280" }}>Clear</Text>
+              </Pressable>
+            )}
+
+            {options.map((opt) => (
+              <Pressable
+                key={opt}
+                onPress={() => {
+                  onChange(opt);
+                  setOpen(false);
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 8,
+                  borderRadius: 8,
+                  backgroundColor: value === opt ? "#f3f4f6" : "transparent",
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: "#111827" }}>{opt}</Text>
+              </Pressable>
+            ))}
+
+            <View style={{ height: 8 }} />
+            <Pressable
+              onPress={() => setOpen(false)}
+              style={{
+                alignSelf: "flex-end",
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: "#d1d5db",
+              }}
+              accessibilityRole="button"
+            >
+              <Text>Close</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+    </>
   );
 };

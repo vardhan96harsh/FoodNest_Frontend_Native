@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -12,26 +12,24 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
-} from 'react-native';
-import { Feather } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+} from "react-native";
+import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { LinearGradient } from "expo-linear-gradient";
+import { KeyboardAvoidingView } from "react-native";
 
-import * as ImagePicker from 'expo-image-picker';
-import { LinearGradient } from 'expo-linear-gradient';
-import { KeyboardAvoidingView } from 'react-native';
+// ---- Local fallback images (REMOVED - no longer using) ----
+// const Chai = require("../../../assets/chai.png");
+// const VadaPav = require("../../../assets/vadapav.png");
+// const Poha = require("../../../assets/poha.png");
+// const Water = require("../../../assets/water.png");
 
-// ---- Local fallback images (kept for placeholders) ----
-const Chai = require('../../../assets/chai.png');
-const VadaPav = require('../../../assets/vadapav.png');
-const Poha = require('../../../assets/poha.png');
-const Water = require('../../../assets/water.png');
+const UNIT_OPTIONS = ["ml", "L", "g", "kg", "piece", "packet"];
 
 // ====== API CONFIG (adjust to your env) ======
-// TIP: if you already keep API_BASE_URL in a central file, import it here instead.
-import { API_BASE_URL as API_URL } from '@/constants/env';
-   // e.g., http://192.168.1.5:1900 on device
+import { API_BASE_URL as API_URL } from "@/constants/env";
 
-// ---- Types (aligns with backend schema below) ----
+// ---- Types ----
 type Item = {
   _id: string;
   name: string;
@@ -39,69 +37,25 @@ type Item = {
   category: string;
   available: boolean;
   tax?: number;
-  imageUrl?: string | null; // served from backend
-  // UI-only fallback for old seeds
-  image?: any;
-
-  // NEW: raw materials / ingredients (optional)
+  imageUrl?: string | null;
   rawMaterials?: Array<{ name: string; qty?: number; unit?: string }>;
-
-  // NEW: quantities
-  totalQuantity?: { amount?: number; unit?: string };
-  perServing?: { amount?: number; unit?: string };
 };
-type Cook = { _id: string; name?: string; email?: string };
-
-
-// --- Cook Status list types ---
-type ApiStatus = 'queued' | 'processing' | 'ready' | 'picked';
-type UiStatus = 'Processing' | 'Ready' | 'Picked';
-
-function apiToUiStatus(s: ApiStatus): UiStatus {
-  if (s === 'ready') return 'Ready';
-  if (s === 'picked') return 'Picked';
-  return 'Processing'; // queued/processing -> Processing
-}
-
-type UserMini = { _id: string; name?: string; email?: string };
-
-type PrepReq = {
-  _id: string;
-  status: ApiStatus;
-  quantityToPrepare?: number;
-  cookId?: string | UserMini;
-  createdBy?: string | UserMini;
-  createdAt?: string;
-  foodSnapshot?: {
-    name?: string;
-    perServing?: { amount?: number; unit?: string };
-    imageUrl?: string | null;
-    rawMaterials?: Array<{ name: string; qty?: number; unit?: string }>;
-  };
-  cook?: UserMini;
-};
-
 
 const toINR = (thb: number) => Math.round(thb * 2.5);
 
 export default function FoodItems() {
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
-  const [cooks, setCooks] = useState<Cook[]>([]);
-  const [chosen, setChosen] = useState<Record<string, string>>({}); // foodId -> cookId
-  const [sending, setSending] = useState<Record<string, boolean>>({}); // foodId -> loading
-  // Cook Status section
-  const [myRequests, setMyRequests] = useState<PrepReq[]>([]);
-  const [reqLoading, setReqLoading] = useState(false);
 
   // form state
-  const [name, setName] = useState('');
-  const [price, setPrice] = useState<string>('');
-  const [category, setCategory] = useState('');
-  const [tax, setTax] = useState<string>('');
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState<string>("");
+  const [category, setCategory] = useState("");
+  const [tax, setTax] = useState<string>("");
   const [available, setAvailable] = useState(true);
   const [picked, setPicked] = useState<{
     uri: string;
@@ -111,26 +65,22 @@ export default function FoodItems() {
     mimeType?: string;
   } | null>(null);
 
-  // NEW: raw materials (UI state uses strings for inputs)
+  const [openUnitIndex, setOpenUnitIndex] = useState<number | null>(null);
   const [rawMaterials, setRawMaterials] = useState<
     Array<{ name: string; qty: string; unit: string }>
-  >([{ name: '', qty: '', unit: '' }]);
-
-  // NEW: quantities (amounts as strings for inputs)
-  const [totalQty, setTotalQty] = useState<string>(''); // amount
-  const [totalUnit, setTotalUnit] = useState<string>(''); // unit
-  const [perServQty, setPerServQty] = useState<string>(''); // amount
-  const [perServUnit, setPerServUnit] = useState<string>(''); // unit
+  >([{ name: "", qty: "", unit: "" }]);
 
   function addRawMaterialRow() {
-    setRawMaterials((arr) => [...arr, { name: '', qty: '', unit: '' }]);
+    setRawMaterials((arr) => [...arr, { name: "", qty: "", unit: "" }]);
   }
+  
   function removeRawMaterialRow(idx: number) {
     setRawMaterials((arr) => arr.filter((_, i) => i !== idx));
   }
+  
   function updateRawMaterial(
     idx: number,
-    key: 'name' | 'qty' | 'unit',
+    key: "name" | "qty" | "unit",
     val: string
   ) {
     setRawMaterials((arr) => {
@@ -142,19 +92,13 @@ export default function FoodItems() {
 
   const resetForm = () => {
     setEditing(null);
-    setName('');
-    setPrice('');
-    setCategory('');
-    setTax('');
+    setName("");
+    setPrice("");
+    setCategory("");
+    setTax("");
     setAvailable(true);
     setPicked(null);
-    // NEW
-    setRawMaterials([{ name: '', qty: '', unit: '' }]);
-    // NEW: reset quantities
-    setTotalQty('');
-    setTotalUnit('');
-    setPerServQty('');
-    setPerServUnit('');
+    setRawMaterials([{ name: "", qty: "", unit: "" }]);
   };
 
   const openAdd = () => {
@@ -167,43 +111,31 @@ export default function FoodItems() {
     setName(it.name);
     setPrice(String(it.price));
     setCategory(it.category);
-    setTax(it.tax ? String(it.tax) : '');
+    setTax(it.tax ? String(it.tax) : "");
     setAvailable(it.available);
-    setPicked(null); // don't prefill image picker
+    setPicked(null);
 
-    // NEW: prefill raw materials if present
     if (it.rawMaterials && it.rawMaterials.length) {
       setRawMaterials(
         it.rawMaterials.map((r) => ({
-          name: r.name || '',
-          qty: r.qty !== undefined && r.qty !== null ? String(r.qty) : '',
-          unit: r.unit || '',
+          name: r.name || "",
+          qty: r.qty !== undefined && r.qty !== null ? String(r.qty) : "",
+          unit: r.unit || "",
         }))
       );
     } else {
-      setRawMaterials([{ name: '', qty: '', unit: '' }]);
+      setRawMaterials([{ name: "", qty: "", unit: "" }]);
     }
-
-    // NEW: prefill quantities
-    setTotalQty(
-      it.totalQuantity?.amount != null ? String(it.totalQuantity.amount) : ''
-    );
-    setTotalUnit(it.totalQuantity?.unit || '');
-    setPerServQty(
-      it.perServing?.amount != null ? String(it.perServing.amount) : ''
-    );
-    setPerServUnit(it.perServing?.unit || '');
 
     setIsAdding(true);
   };
 
-  // ===== Pick image (Expo) =====
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
+    if (status !== "granted") {
       Alert.alert(
-        'Permission needed',
-        'We need media permission to choose a photo.'
+        "Permission needed",
+        "We need media permission to choose a photo."
       );
       return;
     }
@@ -215,140 +147,48 @@ export default function FoodItems() {
       const a = res.assets[0];
       setPicked({
         uri: a.uri,
-        // keep a usable type/name for uploads even if Expo gives null
-        type: a.mimeType ?? 'image/jpeg',
-        name: a.fileName ?? 'food.jpg',
-
-        // FIX: coerce null -> undefined to satisfy your picked type
+        type: a.mimeType ?? "image/jpeg",
+        name: a.fileName ?? "food.jpg",
         fileName: a.fileName ?? undefined,
         mimeType: a.mimeType ?? undefined,
       });
     }
   };
 
-  // ===== Current user id (supervisor) for filtering requests =====
-  async function getUserId(): Promise<string> {
-    // first try a simple key
-    const byKey = (await AsyncStorage.getItem('userId')) || '';
-    if (byKey) return byKey;
-
-    // fallback to stored user object
-    try {
-      const user = JSON.parse((await AsyncStorage.getItem('user')) || '{}');
-      return user?._id || user?.id || '';
-    } catch {
-      return '';
-    }
-  }
-
   // ===== API helpers =====
-
-  // Always return a clean string-to-string map (no undefined values)
-  type HeadersDict = Record<string, string>;
-
-  async function buildAuthHeaders(): Promise<HeadersDict> {
-    const token = await AsyncStorage.getItem('token'); // <-- if you saved as 'accessToken', change this key
-    if (!token) return {};
-    return { Authorization: `Bearer ${token}` };
-  }
-
   async function apiGet<T>(path: string): Promise<T> {
-    // Build a real Headers object to satisfy TS + fetch
-    const auth = await buildAuthHeaders();
-    const headers = new Headers(auth);
-
-    const r = await fetch(`${API_URL}${path}`, { headers });
+    const r = await fetch(`${API_URL}${path}`);
     if (!r.ok) throw new Error(await r.text());
     return (await r.json()) as T;
   }
-
+  
   async function apiSend<T>(
     path: string,
     method: string,
     body: any,
     isForm = false
   ): Promise<T> {
-    const auth = await buildAuthHeaders();
-    const headers = new Headers(auth);
-
-    // For JSON requests, set the content-type; for form-data, let fetch set it (boundary)
-    if (!isForm) headers.set('Content-Type', 'application/json');
-
     const r = await fetch(`${API_URL}${path}`, {
       method,
-      headers,
+      headers: isForm ? undefined : { "Content-Type": "application/json" },
       body: isForm ? body : JSON.stringify(body),
     });
     if (!r.ok) throw new Error(await r.text());
     return (await r.json()) as T;
   }
 
-  // ===== Load my created prep-requests for "Cook Status" =====
-  async function loadMyRequests() {
-    setReqLoading(true);
-    try {
-      const me = await getUserId();
-      if (!me) {
-        setMyRequests([]);
-        return;
-      }
-      // Prefer server-side filter by creator:
-      // GET /api/prep-requests?createdBy=<me>
-      const rows = await apiGet<PrepReq[]>(
-        `/api/prep-requests?createdBy=${encodeURIComponent(me)}`
-      );
-      setMyRequests(rows);
-    } catch (e) {
-      console.warn('loadMyRequests failed', e);
-      setMyRequests([]);
-    } finally {
-      setReqLoading(false);
-    }
-  }
-
   // ===== Load items from backend =====
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const data = await apiGet<Item[]>('/api/foods');
+      const data = await apiGet<Item[]>("/api/foods");
+      console.log("FOODS RECEIVED:", data);
       setItems(data);
     } catch (e: any) {
-      console.warn('/api/foods failed:', e?.message || e);
-      // Fallback: local seeds so screen isn't empty
-      setItems([
-        {
-          _id: '1',
-          name: 'Poha',
-          price: 20,
-          category: 'Snacks',
-          available: true,
-          image: Poha,
-        },
-        {
-          _id: '2',
-          name: 'Vada Pav',
-          price: 30,
-          category: 'Snacks',
-          available: true,
-          image: VadaPav,
-        },
-        {
-          _id: '3',
-          name: 'Tea',
-          price: 7.99,
-          category: 'Beverages',
-          available: false,
-          image: Chai,
-        },
-        {
-          _id: '4',
-          name: 'Water Bottle',
-          price: 6.99,
-          category: 'Beverages',
-          available: true,
-          image: Water,
-        },
-      ]);
+      console.warn("/api/foods failed:", e?.message || e);
+      setItems([]);
+      setError(e?.message || "Failed to load food items from server");
     } finally {
       setLoading(false);
     }
@@ -358,26 +198,6 @@ export default function FoodItems() {
     load();
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const list = await apiGet<Cook[]>('/api/users?role=cook');
-        setCooks(list);
-      } catch (e) {
-        console.warn('Load cooks failed', e);
-        setCooks([]);
-      }
-    })();
-  }, []);
-
-  // Load the "Cook Status" list on mount and poll every 10s
-  useEffect(() => {
-    loadMyRequests();
-    const t = setInterval(loadMyRequests, 1000000);
-    return () => clearInterval(t);
-  }, []);
-
-  // ===== Build a robust RN file part =====
   function toFilePart(p: {
     uri: string;
     type?: string;
@@ -386,25 +206,22 @@ export default function FoodItems() {
     fileName?: string;
   }) {
     const uri = p.uri;
-
-    const sourceName = p.fileName || p.name || '';
-    const fromUri = uri.split('?')[0].split('#')[0];
-    const rawLast = (sourceName || fromUri).split('/').pop() || 'image.jpg';
-
+    const sourceName = p.fileName || p.name || "";
+    const fromUri = uri.split("?")[0].split("#")[0];
+    const rawLast = (sourceName || fromUri).split("/").pop() || "image.jpg";
     const hasExt = /\.[a-z0-9]+$/i.test(rawLast);
     const name = hasExt ? rawLast : `${rawLast}.jpg`;
-
-    const ext = (name.split('.').pop() || '').toLowerCase();
+    const ext = (name.split(".").pop() || "").toLowerCase();
     const type =
       p.mimeType ||
       p.type ||
-      (ext === 'png'
-        ? 'image/png'
-        : ext === 'webp'
-        ? 'image/webp'
-        : ext === 'gif'
-        ? 'image/gif'
-        : 'image/jpeg');
+      (ext === "png"
+        ? "image/png"
+        : ext === "webp"
+        ? "image/webp"
+        : ext === "gif"
+        ? "image/gif"
+        : "image/jpeg");
 
     return { uri, name, type } as any;
   }
@@ -421,33 +238,28 @@ export default function FoodItems() {
   ) {
     if (!picked) return;
 
-    // build a solid name/type using your existing logic
-    const part = toFilePart(picked); // returns { uri, name, type }
+    const part = toFilePart(picked);
 
-    if (Platform.OS === 'web') {
+    if (Platform.OS === "web") {
       const resp = await fetch(part.uri);
       const blob = await resp.blob();
-      // Some browsers need a File to keep the filename
       const file = new File([blob], part.name, {
-        type: part.type || blob.type || 'image/jpeg',
+        type: part.type || blob.type || "image/jpeg",
       });
-      fd.append('image', file);
+      fd.append("image", file);
     } else {
-      // iOS/Android RN style
-      fd.append('image', part as any);
+      fd.append("image", part as any);
     }
   }
 
-  // ===== Create / Update =====
   const save = async () => {
     const p = Number(price);
     const t = tax ? Number(tax) : undefined;
     if (!name.trim() || !category.trim() || Number.isNaN(p)) {
-      Alert.alert('Please fill valid Name, Category and Price.');
+      Alert.alert("Please fill valid Name, Category and Price.");
       return;
     }
 
-    // NEW: build clean rawMaterials (name required; qty optional number; unit optional)
     const cleanRawMaterials = rawMaterials
       .map((r) => ({
         name: r.name.trim(),
@@ -457,69 +269,37 @@ export default function FoodItems() {
       .filter((r) => r.name.length > 0)
       .map((r) => ({
         name: r.name,
-        qty: r.qty === '' ? undefined : Number(r.qty),
+        qty: r.qty === "" ? undefined : Number(r.qty),
         unit: r.unit || undefined,
       }));
-
-    // NEW: build quantities payloads (send only if amount is provided)
-    const totalQuantityPayload =
-      totalQty.trim() === ''
-        ? undefined
-        : {
-            amount: Number(totalQty),
-            unit: totalUnit.trim() || undefined,
-          };
-
-    const perServingPayload =
-      perServQty.trim() === ''
-        ? undefined
-        : {
-            amount: Number(perServQty),
-            unit: perServUnit.trim() || undefined,
-          };
 
     setSaving(true);
     try {
       if (editing) {
-        // PATCH JSON (image optional via multipart)
         let updated: Item;
         if (picked) {
           const fd = new FormData();
-          fd.append('name', name);
-          fd.append('price', String(p));
-          fd.append('category', category);
-          if (t !== undefined) fd.append('tax', String(t));
-          fd.append('available', String(available));
-          // NEW: include rawMaterials in multipart
-          fd.append('rawMaterials', JSON.stringify(cleanRawMaterials));
-          // NEW: include quantities in multipart if present
-          if (totalQuantityPayload) {
-            fd.append('totalQuantity', JSON.stringify(totalQuantityPayload));
-          }
-          if (perServingPayload) {
-            fd.append('perServing', JSON.stringify(perServingPayload));
-          }
-          // Use robust file-part builder
+          fd.append("name", name);
+          fd.append("price", String(p));
+          fd.append("category", category);
+          if (t !== undefined) fd.append("tax", String(t));
+          fd.append("available", String(available));
+          fd.append("rawMaterials", JSON.stringify(cleanRawMaterials));
           await appendPickedImage(fd, picked);
           updated = await apiSend<Item>(
             `/api/foods/${editing._id}`,
-            'PATCH',
+            "PATCH",
             fd,
             true
           );
         } else {
-          updated = await apiSend<Item>(`/api/foods/${editing._id}`, 'PATCH', {
+          updated = await apiSend<Item>(`/api/foods/${editing._id}`, "PATCH", {
             name,
             price: p,
             category,
             tax: t,
             available,
-            // NEW
             rawMaterials: cleanRawMaterials,
-            ...(totalQuantityPayload
-              ? { totalQuantity: totalQuantityPayload }
-              : {}),
-            ...(perServingPayload ? { perServing: perServingPayload } : {}),
           });
         }
         setItems((arr) =>
@@ -527,148 +307,96 @@ export default function FoodItems() {
         );
       } else {
         const fd = new FormData();
-        fd.append('name', name);
-        fd.append('price', String(p));
-        fd.append('category', category);
-        if (t !== undefined) fd.append('tax', String(t));
-        fd.append('available', String(available));
-        // NEW: include rawMaterials in multipart
-        fd.append('rawMaterials', JSON.stringify(cleanRawMaterials));
-        // NEW: include quantities in multipart if present
-        if (totalQuantityPayload) {
-          fd.append('totalQuantity', JSON.stringify(totalQuantityPayload));
-        }
-        if (perServingPayload) {
-          fd.append('perServing', JSON.stringify(perServingPayload));
-        }
+        fd.append("name", name);
+        fd.append("price", String(p));
+        fd.append("category", category);
+        if (t !== undefined) fd.append("tax", String(t));
+        fd.append("available", String(available));
+        fd.append("rawMaterials", JSON.stringify(cleanRawMaterials));
         if (picked) {
-          // Use robust file-part builder
           await appendPickedImage(fd, picked);
         }
-        const created = await apiSend<Item>('/api/foods', 'POST', fd, true);
+        const created = await apiSend<Item>("/api/foods", "POST", fd, true);
         setItems((arr) => [created, ...arr]);
       }
       setIsAdding(false);
       resetForm();
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Unable to save item');
+      Alert.alert("Save failed", e?.message || "Unable to save item");
     } finally {
       setSaving(false);
     }
   };
 
-  // ===== Delete =====
   const remove = async (_id: string) => {
     try {
-      await apiSend(`/api/foods/${_id}`, 'DELETE', {});
+      await apiSend(`/api/foods/${_id}`, "DELETE", {});
       setItems((arr) => arr.filter((x) => x._id !== _id));
     } catch (e: any) {
-      Alert.alert('Delete failed', e?.message || 'Unable to delete');
+      Alert.alert("Delete failed", e?.message || "Unable to delete");
     }
   };
-
-  // ===== Assign to cook =====
-  const setChoice = (foodId: string, cookId: string) =>
-    setChosen((prev) => ({ ...prev, [foodId]: cookId }));
-
-  async function sendPrepRequest(food: Item) {
-    const cookId = chosen[food._id];
-    if (!cookId) {
-      Alert.alert('Pick a cook first');
-      return;
-    }
-    setSending((s) => ({ ...s, [food._id]: true }));
-    try {
-      await apiSend('/api/prep-requests', 'POST', {
-        foodId: food._id,
-        cookId,
-        // if you want to pass a quantity, use your existing field; otherwise 0:
-        quantityToPrepare: food.totalQuantity?.amount ?? 0,
-      });
-      Alert.alert('Sent', 'Request forwarded to cook');
-      // Immediately refresh the Cook Status section so this shows up
-      await loadMyRequests();
-    } catch (e: any) {
-      Alert.alert('Failed', e?.message || 'Could not send');
-    } finally {
-      setSending((s) => ({ ...s, [food._id]: false }));
-    }
-  }
-
-  // 2-column card layout
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
       {/* Header */}
-      {/* Header */}
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.h1}>Today's Menu</Text>
-          <Text style={styles.muted}>
-            Set raw material quantity & assign chefs
-          </Text>
-          <Pressable
-      onPress={loadMyRequests}
-      style={[styles.iconBtn, { alignSelf: 'flex-start', marginTop: 6 }]}
-    >
-      <Text style={{ fontWeight: '700' }}>Refresh Cook Status</Text>
-    </Pressable>
-
-
-          <Pressable
-            onPress={openAdd}
-            style={[styles.addBtn, styles.addBtnUnder]}
-          >
-            <LinearGradient
-              colors={['#FDE047', '#F59E0B']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.addBtnGrad}
-            >
-              <Feather
-                name='plus'
-                size={16}
-                color='#ffffff'
-              />
-              <Text style={styles.addBtnTextYellow}> Add Food Item</Text>
-            </LinearGradient>
-          </Pressable>
+          <Text style={styles.h1}>Food Items</Text>
+          <Text style={styles.muted}>Manage menu items and pricing</Text>
         </View>
+        <Pressable onPress={openAdd} style={styles.addBtn}>
+          <LinearGradient
+            colors={["#FDE047", "#F59E0B"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.addBtnGrad}
+          >
+            <Feather name="plus" size={16} color="#ffffff" />
+            <Text style={styles.addBtnTextYellow}> Add Food Item</Text>
+          </LinearGradient>
+        </Pressable>
       </View>
 
-      {/* Loader */}
+      {/* Loader or Error or Empty State or Items */}
       {loading ? (
         <View style={{ paddingVertical: 40 }}>
-          <ActivityIndicator size='large' />
+          <ActivityIndicator size="large" />
+        </View>
+      ) : error ? (
+        <View style={{ paddingVertical: 40, alignItems: "center", gap: 16 }}>
+          <Feather name="alert-circle" size={48} color="#EF4444" />
+          <Text style={{ color: "#6b7280", textAlign: "center" }}>{error}</Text>
+          <Pressable 
+            onPress={load}
+            style={styles.btnOutline}
+          >
+            <Text>Try Again</Text>
+          </Pressable>
+        </View>
+      ) : items.length === 0 ? (
+        <View style={{ paddingVertical: 40, alignItems: "center", gap: 16 }}>
+          <Feather name="coffee" size={48} color="#9CA3AF" />
+          <Text style={{ color: "#6b7280", textAlign: "center" }}>
+            No food items found.{"\n"}
+            Tap the "Add Food Item" button to create your first menu item.
+          </Text>
         </View>
       ) : (
         <View style={{ gap: 16 }}>
           {items.map((item) => (
-            <View
-              key={item._id}
-              style={styles.cardRow}
-            >
+            <View key={item._id} style={styles.cardRow}>
               {/* Image (square thumb) */}
               <View style={styles.thumbBox}>
                 {item.imageUrl ? (
                   <Image
                     source={{ uri: item.imageUrl }}
-                    style={{ width: '100%', height: '100%' }}
-                    resizeMode='cover'
-                  />
-                ) : item.image ? (
-                  <Image
-                    source={item.image}
-                    style={{ width: '100%', height: '100%' }}
-                    resizeMode='cover'
+                    style={{ width: "100%", height: "100%" }}
+                    resizeMode="cover"
                   />
                 ) : (
                   <View style={styles.placeholderBox}>
-                    <Feather
-                      name='image'
-                      size={28}
-                      color='#9CA3AF'
-                    />
+                    <Feather name="image" size={28} color="#9CA3AF" />
                     <Text style={styles.placeholderText}>No image</Text>
                   </View>
                 )}
@@ -695,30 +423,27 @@ export default function FoodItems() {
                           : styles.badgeTextOff,
                       ]}
                     >
-                      {item.available ? 'Available' : 'Unavailable'}
+                      {item.available ? "Available" : "Unavailable"}
                     </Text>
                   </View>
                 </View>
 
-                {/* NEW: Raw materials */}
+                {/* Raw materials */}
                 {Array.isArray(item.rawMaterials) &&
                   item.rawMaterials.length > 0 && (
                     <View style={{ marginTop: 6 }}>
                       <Text style={styles.rmLabel}>Raw materials</Text>
-                      <Text
-                        style={styles.rmText}
-                        numberOfLines={2}
-                      >
+                      <Text style={styles.rmText}>
                         {item.rawMaterials
                           .map(
                             (r) =>
                               `${r.name}${
-                                r.qty != null
-                                  ? ` (${r.qty}${r.unit ? ' ' + r.unit : ''})`
-                                  : ''
+                                r.qty
+                                  ? ` (${r.qty}${r.unit ? r.unit : ""})`
+                                  : ""
                               }`
                           )
-                          .join(', ')}
+                          .join(", ")}
                       </Text>
                     </View>
                   )}
@@ -728,7 +453,7 @@ export default function FoodItems() {
                   <Text style={styles.price}>
                     ฿{item.price}
                     <Text style={styles.inr}>
-                      {' '}
+                      {" "}
                       INR {Math.round(item.price * 2.5)}
                     </Text>
                   </Text>
@@ -738,224 +463,45 @@ export default function FoodItems() {
                       style={styles.iconBtn}
                       onPress={() => openEdit(item)}
                     >
-                      <Feather
-                        name='edit-2'
-                        size={18}
-                      />
+                      <Feather name="edit-2" size={18} />
                     </Pressable>
                     <Pressable
                       style={styles.iconBtn}
                       onPress={() => remove(item._id)}
                     >
-                      <Feather
-                        name='trash-2'
-                        size={18}
-                      />
+                      <Feather name="trash-2" size={18} />
                     </Pressable>
                   </View>
-                </View>
-                {/* Assign to Cook */}
-                <View style={{ marginTop: 10, gap: 8 }}>
-                  <Text style={{ fontSize: 12, color: '#374151' }}>
-                    Assign cook
-                  </Text>
-
-                  {/* horizontal chips as a simple dropdown substitute */}
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: 8 }}
-                  >
-                    {cooks.map((c) => (
-                      <Pressable
-                        key={c._id}
-                        onPress={() => setChoice(item._id, c._id)}
-                        style={[
-                          {
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: '#e5e7eb',
-                          },
-                          chosen[item._id] === c._id && {
-                            backgroundColor: '#111827',
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            {
-                              fontSize: 12,
-                              fontWeight: '700',
-                              color: '#374151',
-                            },
-                            chosen[item._id] === c._id && { color: '#fff' },
-                          ]}
-                        >
-                          {c.name || c.email}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-
-                  <Pressable
-                    onPress={() => sendPrepRequest(item)}
-                    style={[
-                      styles.iconBtn,
-                      {
-                        alignSelf: 'flex-start',
-                        backgroundColor: '#111827',
-                        borderColor: '#111827',
-                      },
-                    ]}
-                    disabled={!!sending[item._id]}
-                  >
-                    {sending[item._id] ? (
-                      <ActivityIndicator color='#fff' />
-                    ) : (
-                      <Text style={{ color: '#fff', fontWeight: '700' }}>
-                        Send
-                      </Text>
-                    )}
-                  </Pressable>
                 </View>
               </View>
             </View>
           ))}
-          {/* ---------- Cook Status (requests sent by this supervisor) ---------- */}
-<View style={{ marginTop: 14, gap: 10 }}>
-  <Text style={{ fontSize: 18, fontWeight: '700' }}>Cook Status</Text>
-
-  {reqLoading && myRequests.length === 0 ? (
-    <View style={{ paddingVertical: 20 }}>
-      <ActivityIndicator />
-    </View>
-  ) : myRequests.length === 0 ? (
-    <Text style={{ color: '#6b7280' }}>
-      No requests sent yet. Assign a cook to see updates here.
-    </Text>
-  ) : (
-    myRequests.map(req => {
-      const ui: UiStatus = apiToUiStatus(req.status);
-      const cookLabel =
-      typeof req.cookId === 'object'
-        ? req.cookId?.name || req.cookId?.email
-        : cooks.find(c => c._id === req.cookId)?.name ||
-          cooks.find(c => c._id === req.cookId)?.email ||
-          `Cook ${req.cookId ?? ''}`;
-    
-      
-      return (
-        <View
-          key={req._id}
-          style={{
-            backgroundColor: 'white',
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: '#e5e7eb',
-            padding: 12,
-            gap: 8
-          }}
-        >
-          {/* Top row: food name + status pill */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: 16, fontWeight: '700' }}>
-              {req.foodSnapshot?.name ?? 'Item'}
-            </Text>
-
-            <View
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 4,
-                borderRadius: 999,
-                backgroundColor:
-                  ui === 'Ready' ? '#DCFCE7' :
-                  ui === 'Picked' ? '#E0E7FF' : '#FEF3C7'
-              }}
-            >
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '800',
-                color:
-                  ui === 'Ready' ? '#166534' :
-                  ui === 'Picked' ? '#3730A3' : '#92400E'
-              }}>
-                {ui === 'Processing' ? 'Start preparing' : ui}
-              </Text>
-            </View>
-          </View>
-
-          {/* Cook + qty */}
-          <Text style={{ color: '#374151' }}>
-            Cook: <Text style={{ fontWeight: '700' }}>{cookLabel}</Text>
-            {typeof req.quantityToPrepare === 'number' ? `  •  Qty: ${req.quantityToPrepare}` : ''}
-          </Text>
-          {/* Requested by + time */}
-<Text style={{ color: '#6b7280' }}>
-  Requested by:{' '}
-  <Text style={{ fontWeight: '700', color: '#374151' }}>
-    {
-      typeof req.createdBy === 'object'
-        ? req.createdBy?.name || req.createdBy?.email
-        : req.createdBy || 'Supervisor'
-    }
-  </Text>
-  {req.createdAt ? `  •  ${new Date(req.createdAt).toLocaleString()}` : ''}
-</Text>
-
-
-          {/* Per-serving + materials (compact) */}
-          {req.foodSnapshot?.perServing?.amount != null && (
-            <Text style={{ color: '#6b7280' }}>
-              Per serving: {req.foodSnapshot.perServing.amount}
-              {req.foodSnapshot.perServing.unit ? ` ${req.foodSnapshot.perServing.unit}` : ''}
-            </Text>
-          )}
-
-          {Array.isArray(req.foodSnapshot?.rawMaterials) &&
-            req.foodSnapshot!.rawMaterials!.length > 0 && (
-            <Text style={{ color: '#6b7280' }} numberOfLines={2}>
-              Materials: {req.foodSnapshot!.rawMaterials!
-                .map(r => `${r.name}${r.qty != null ? ` (${r.qty}${r.unit ? ' '+r.unit : ''})` : ''}`)
-                .join(', ')}
-            </Text>
-          )}
-        </View>
-      );
-    })
-  )}
-</View>
-
         </View>
       )}
 
       {/* Add/Edit modal */}
-      {/* Add/Edit modal */}
       <Modal
         transparent
         visible={isAdding}
-        animationType='slide'
+        animationType="slide"
         onRequestClose={() => setIsAdding(false)}
       >
         <View style={styles.backdrop}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
             style={styles.modalCard}
           >
-            {/* Header */}
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editing ? 'Edit Food Item' : 'Add New Food Item'}
+                {editing ? "Edit Food Item" : "Add New Food Item"}
               </Text>
               <Text style={styles.modalDesc}>Create a new menu item</Text>
             </View>
 
-            {/* Scrollable form */}
             <ScrollView
               style={styles.modalScroll}
               contentContainerStyle={styles.modalContent}
-              keyboardShouldPersistTaps='handled'
+              keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
             >
               <View style={styles.formRow}>
@@ -963,7 +509,7 @@ export default function FoodItems() {
                   <Text style={styles.label}>Food Name</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder='Enter food name'
+                    placeholder="Enter food name"
                     value={name}
                     onChangeText={setName}
                   />
@@ -972,8 +518,8 @@ export default function FoodItems() {
                   <Text style={styles.label}>Price (฿)</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder='0.00'
-                    keyboardType='decimal-pad'
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
                     value={price}
                     onChangeText={setPrice}
                   />
@@ -985,7 +531,7 @@ export default function FoodItems() {
                   <Text style={styles.label}>Category</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder='e.g., Snacks, Beverages'
+                    placeholder="e.g., Snacks, Beverages"
                     value={category}
                     onChangeText={setCategory}
                   />
@@ -994,96 +540,140 @@ export default function FoodItems() {
                   <Text style={styles.label}>Tax / VAT (%)</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder='e.g., 5'
-                    keyboardType='number-pad'
+                    placeholder="e.g., 5"
+                    keyboardType="number-pad"
                     value={tax}
                     onChangeText={setTax}
                   />
                 </View>
               </View>
 
-              <View style={[styles.formRow, { alignItems: 'center' }]}>
+              <View style={[styles.formRow, { alignItems: "center" }]}>
                 <View
                   style={[
                     styles.field,
-                    { flexDirection: 'row', alignItems: 'center', gap: 10 },
+                    { flexDirection: "row", alignItems: "center", gap: 10 },
                   ]}
                 >
-                  <RNSwitch
-                    value={available}
-                    onValueChange={setAvailable}
-                  />
+                  <RNSwitch value={available} onValueChange={setAvailable} />
                   <Text style={styles.label}>Available</Text>
                 </View>
               </View>
 
-              {/* Raw Materials (Supervisor: Name + Qty + Unit) */}
+              {/* Raw Materials */}
               <View style={{ gap: 6, marginTop: 8 }}>
-                <Text style={styles.label}>Raw Materials / Ingredients</Text>
+                <Text style={styles.label}>Raw Materials</Text>
 
                 {rawMaterials.map((rm, idx) => (
                   <View
                     key={idx}
-                    style={[styles.formRow, { alignItems: 'center' }]}
+                    style={{
+                      flexDirection: "row",
+                      gap: 8,
+                      alignItems: "center",
+                    }}
                   >
-                    <View style={[styles.field, { flex: 1.2 }]}>
+                    <View style={{ flex: 1 }}>
                       <Text style={styles.label}>Name</Text>
                       <TextInput
                         style={styles.input}
-                        placeholder='e.g., Poha, Oil, Peanuts'
+                        placeholder="Poha / Oil / Peanuts"
                         value={rm.name}
-                        onChangeText={(v) => updateRawMaterial(idx, 'name', v)}
+                        onChangeText={(v) => updateRawMaterial(idx, "name", v)}
                       />
                     </View>
-                    <View style={[styles.field, { flex: 0.6 }]}>
+
+                    <View style={{ width: 80 }}>
                       <Text style={styles.label}>Qty</Text>
                       <TextInput
                         style={styles.input}
-                        placeholder='e.g., 0.5'
-                        keyboardType='decimal-pad'
+                        keyboardType="numeric"
+                        placeholder="0"
                         value={rm.qty}
-                        onChangeText={(v) => updateRawMaterial(idx, 'qty', v)}
+                        onChangeText={(v) => updateRawMaterial(idx, "qty", v)}
                       />
                     </View>
-                    <View style={[styles.field, { flex: 0.7 }]}>
-                      <Text style={styles.label}>Unit</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder='e.g., kg, g, ml, tbsp'
-                        value={rm.unit}
-                        onChangeText={(v) => updateRawMaterial(idx, 'unit', v)}
-                      />
+
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        gap: 12,
+                        alignItems: "center",
+                        position: "relative",
+                        zIndex: openUnitIndex === idx ? 100 : 1,
+                      }}
+                    >
+                      <View
+                        style={{ width: 90, position: "relative", zIndex: 200 }}
+                      >
+                        <Text style={styles.label}>Unit</Text>
+
+                        <Pressable
+                          onPress={() =>
+                            setOpenUnitIndex(openUnitIndex === idx ? null : idx)
+                          }
+                          style={styles.unitBox}
+                        >
+                          <Text
+                            style={{
+                              color: rm.unit ? "#111827" : "#9ca3af",
+                              fontSize: 14,
+                            }}
+                          >
+                            {rm.unit || "Select"}
+                          </Text>
+
+                          <Feather
+                            name={
+                              openUnitIndex === idx
+                                ? "chevron-up"
+                                : "chevron-down"
+                            }
+                            size={16}
+                            color="#6b7280"
+                          />
+                        </Pressable>
+
+                        {openUnitIndex === idx && (
+                          <View
+                            style={styles.unitDropdown}
+                            pointerEvents="auto"
+                          >
+                            {UNIT_OPTIONS.map((u) => (
+                              <Pressable
+                                key={u}
+                                onPress={() => {
+                                  updateRawMaterial(idx, "unit", u);
+                                  setOpenUnitIndex(null);
+                                }}
+                                style={styles.unitOption}
+                              >
+                                <Text style={styles.unitOptionText}>{u}</Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        )}
+                      </View>
                     </View>
 
                     <Pressable
                       onPress={() => removeRawMaterialRow(idx)}
-                      style={[styles.iconBtn, { marginTop: 24 }]}
+                      style={[styles.iconBtn, { marginTop: 22 }]}
                     >
-                      <Feather
-                        name='minus'
-                        size={18}
-                      />
+                      <Feather name="minus" size={18} />
                     </Pressable>
                   </View>
                 ))}
 
-                <View
-                  style={{ flexDirection: 'row', justifyContent: 'flex-start' }}
-                >
-                  <Pressable
-                    onPress={addRawMaterialRow}
-                    style={styles.iconBtn}
-                  >
-                    <Feather
-                      name='plus'
-                      size={18}
-                    />
+                <View style={{ flexDirection: "row", marginTop: 6 }}>
+                  <Pressable onPress={addRawMaterialRow} style={styles.iconBtn}>
+                    <Feather name="plus" size={18} />
                   </Pressable>
                   <Text
                     style={{
-                      alignSelf: 'center',
+                      alignSelf: "center",
                       marginLeft: 8,
-                      color: '#6b7280',
+                      color: "#6b7280",
                     }}
                   >
                     Add another material
@@ -1091,80 +681,22 @@ export default function FoodItems() {
                 </View>
               </View>
 
-              {/* NEW: Quantities */}
-              <View style={{ gap: 6, marginTop: 8 }}>
-                <Text style={styles.label}>Quantities</Text>
-
-                {/* Total quantity */}
-                <View style={[styles.formRow, { alignItems: 'center' }]}>
-                  <View style={[styles.field, { flex: 0.8 }]}>
-                    <Text style={styles.label}>Total Quantity</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder='e.g., 5'
-                      keyboardType='decimal-pad'
-                      value={totalQty}
-                      onChangeText={setTotalQty}
-                    />
-                  </View>
-                  <View style={[styles.field, { flex: 0.8 }]}>
-                    <Text style={styles.label}>Unit</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder='e.g., kg, g, L, ml, pcs'
-                      value={totalUnit}
-                      onChangeText={setTotalUnit}
-                    />
-                  </View>
-                </View>
-
-                {/* Per serving quantity */}
-                <View style={[styles.formRow, { alignItems: 'center' }]}>
-                  <View style={[styles.field, { flex: 0.8 }]}>
-                    <Text style={styles.label}>Per Serving Quantity</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder='e.g., 0.15'
-                      keyboardType='decimal-pad'
-                      value={perServQty}
-                      onChangeText={setPerServQty}
-                    />
-                  </View>
-                  <View style={[styles.field, { flex: 0.8 }]}>
-                    <Text style={styles.label}>Unit</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder='e.g., kg, g, L, ml, pcs'
-                      value={perServUnit}
-                      onChangeText={setPerServUnit}
-                    />
-                  </View>
-                </View>
-              </View>
-
               {/* Upload area */}
-              <View style={{ gap: 6 }}>
+              <View style={{ gap: 10, marginTop: 8 ,width:"50%"}}>
                 <Text style={styles.label}>Food Image</Text>
-                <Pressable
-                  style={styles.uploadBox}
-                  onPress={pickImage}
-                >
+                <Pressable style={styles.uploadBox} onPress={pickImage}>
                   {picked ? (
                     <Image
                       source={{ uri: picked.uri }}
-                      style={{ width: '100%', height: 160, borderRadius: 10 }}
+                      style={{ width: "100%", height: 160, borderRadius: 10 }}
                     />
                   ) : (
                     <>
-                      <Feather
-                        name='upload'
-                        size={28}
-                        color='#6b7280'
-                      />
-                      <Text style={{ color: '#6b7280', marginTop: 6 }}>
+                      <Feather name="upload" size={28} color="#6b7280" />
+                      <Text style={{ color: "#6b7280", marginTop: 6 }}>
                         Tap to upload or pick from gallery
                       </Text>
-                      <Text style={{ color: '#9ca3af', fontSize: 12 }}>
+                      <Text style={{ color: "#9ca3af", fontSize: 12 }}>
                         PNG, JPG up to 10MB
                       </Text>
                     </>
@@ -1173,7 +705,6 @@ export default function FoodItems() {
               </View>
             </ScrollView>
 
-            {/* Pinned footer */}
             <View style={styles.modalActions}>
               <Pressable
                 onPress={() => {
@@ -1193,7 +724,7 @@ export default function FoodItems() {
                 {saving ? (
                   <ActivityIndicator />
                 ) : (
-                  <Text style={{ color: 'white', fontWeight: '600' }}>
+                  <Text style={{ color: "white", fontWeight: "600" }}>
                     Save Item
                   </Text>
                 )}
@@ -1209,30 +740,29 @@ export default function FoodItems() {
 const styles = StyleSheet.create({
   page: { padding: 16, paddingBottom: 32, gap: 16 },
   headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  h1: { fontSize: 24, fontWeight: '700' },
-  muted: { color: '#6b7280', paddingTop: 6 },
+  h1: { fontSize: 24, fontWeight: "700" },
+  muted: { color: "#6b7280" },
 
   addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'transparent',
-    paddingHorizontal: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "transparent",
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
   },
 
   addBtnGrad: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
-    // optional: subtle shadow
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 6 },
     shadowRadius: 10,
@@ -1240,20 +770,20 @@ const styles = StyleSheet.create({
   },
 
   addBtnTextYellow: {
-    color: '#ffffff',
+    color: "#ffffff",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 
-  addBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  addBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 
-  row: { flexDirection: 'row', gap: 16 },
+  row: { flexDirection: "row", gap: 16 },
   card: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderRadius: 14,
     padding: 12,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 6 },
     shadowRadius: 10,
@@ -1261,20 +791,20 @@ const styles = StyleSheet.create({
   },
 
   imageBox: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: "#f3f4f6",
     borderRadius: 12,
-    overflow: 'hidden',
+    overflow: "hidden",
     aspectRatio: 1,
     marginBottom: 10,
   },
   cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     marginBottom: 6,
   },
-  cardTitle: { fontSize: 16, fontWeight: '700' },
-  cardDesc: { color: '#6b7280' },
+  cardTitle: { fontSize: 16, fontWeight: "700" },
+  cardDesc: { color: "#6b7280" },
 
   badge: {
     paddingHorizontal: 10,
@@ -1282,51 +812,51 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
   },
-  badgeOn: { backgroundColor: '#10b98122', borderColor: '#10b98155' },
-  badgeOff: { backgroundColor: '#e5e7eb', borderColor: '#d1d5db' },
-  badgeText: { fontSize: 12, fontWeight: '600' },
-  badgeTextOn: { color: '#065f46' },
-  badgeTextOff: { color: '#374151' },
+  badgeOn: { backgroundColor: "#10b98122", borderColor: "#10b98155" },
+  badgeOff: { backgroundColor: "#e5e7eb", borderColor: "#d1d5db" },
+  badgeText: { fontSize: 12, fontWeight: "600" },
+  badgeTextOn: { color: "#065f46" },
+  badgeTextOff: { color: "#374151" },
 
   cardFooter: {
     marginTop: 6,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  price: { fontSize: 20, fontWeight: '700', color: '#111827' },
-  inr: { marginLeft: 4, color: '#6b7280', fontSize: 12 },
-  actions: { flexDirection: 'row', gap: 8 },
+  price: { fontSize: 20, fontWeight: "700", color: "#111827" },
+  inr: { marginLeft: 4, color: "#6b7280", fontSize: 12 },
+  actions: { flexDirection: "row", gap: 8 },
   iconBtn: {
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderWidth: 1,
     borderRadius: 8,
-    borderColor: '#d1d5db',
+    borderColor: "#d1d5db",
   },
 
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'center',
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
     padding: 20,
   },
   modalCard: {
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderRadius: 16,
     padding: 16,
     gap: 12,
-    maxHeight: '86%',
+    maxHeight: "86%",
   },
-  modalTitle: { fontSize: 18, fontWeight: '700' },
-  modalDesc: { color: '#6b7280' },
+  modalTitle: { fontSize: 18, fontWeight: "700" },
+  modalDesc: { color: "#6b7280" },
 
-  formRow: { flexDirection: 'row', gap: 12 },
+  formRow: { flexDirection: "row", gap: 12 },
   field: { flex: 1, gap: 6 },
-  label: { fontWeight: '600', color: '#374151' },
+  label: { fontWeight: "600", color: "#374151" },
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: "#d1d5db",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1334,18 +864,18 @@ const styles = StyleSheet.create({
 
   uploadBox: {
     borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: '#d1d5db',
+    borderStyle: "dashed",
+    borderColor: "#d1d5db",
     borderRadius: 12,
     padding: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     minHeight: 80,
   },
 
   modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    flexDirection: "row",
+    justifyContent: "flex-end",
     gap: 12,
     marginTop: 6,
   },
@@ -1354,31 +884,31 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1,
     borderRadius: 10,
-    borderColor: '#d1d5db',
+    borderColor: "#d1d5db",
   },
   btnSolid: {
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: '#111827',
+    backgroundColor: "#111827",
     borderRadius: 10,
   },
 
   placeholderBox: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f3f4f6',
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f3f4f6",
   },
-  placeholderText: { marginTop: 6, color: '#9CA3AF', fontSize: 12 },
+  placeholderText: { marginTop: 6, color: "#9CA3AF", fontSize: 12 },
 
   cardRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderRadius: 14,
     padding: 12,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 6 },
     shadowRadius: 10,
@@ -1389,8 +919,8 @@ const styles = StyleSheet.create({
     width: 84,
     height: 84,
     borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#f3f4f6',
+    overflow: "hidden",
+    backgroundColor: "#f3f4f6",
   },
 
   cardBody: {
@@ -1399,35 +929,66 @@ const styles = StyleSheet.create({
   },
 
   cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
   },
 
   cardFooterRow: {
     marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
 
   rmLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#374151',
+    fontWeight: "700",
+    color: "#374151",
     opacity: 0.8,
   },
 
   rmText: {
-    color: '#6b7280',
+    color: "#6b7280",
     marginTop: 2,
+  },
+  unitBox: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 44,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  unitDropdown: {
+    position: "absolute",
+    top: 70,
+    left: 0,
+    width: 120,
+    backgroundColor: "white",
+    borderRadius: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    zIndex: 100,
+    elevation: 12,
+    pointerEvents: "auto",
+  },
+
+  unitOption: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+
+  unitOptionText: {
+    fontSize: 14,
+    color: "#111827",
   },
 
   modalHeader: { marginBottom: 4 },
   modalScroll: {},
   modalContent: { gap: 12, paddingBottom: 8 },
-  addBtnUnder: {
-    alignSelf: 'flex-start',
-    marginTop: 5,
-  },
 });

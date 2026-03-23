@@ -1,5 +1,5 @@
 // screens/AssignRider.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Alert,
   Modal,
@@ -9,134 +9,149 @@ import {
   Text,
   TextInput,
   View,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from "expo-linear-gradient";
+import { api } from "@/lib/api";
 
-
-/* ---------- Types ---------- */
+/* ---------- Types (Matching Backend) ---------- */
 type Rider = {
-  id: number;
+  _id: string;
   name: string;
-  status: 'Available' | 'Active' | 'Off Duty';
-  route: string;
+  email: string;
+  status?: 'Available' | 'Active' | 'Off Duty';
 };
+
 type Vehicle = {
-  id: number;
-  registration: string;
+  _id: string;
+  registrationNo: string;
   type: 'Cart' | 'Bike';
   status: 'Available' | 'In Use' | 'Maintenance';
 };
+
 type Route = {
-  id: number;
+  _id: string;
   name: string;
-  stops: number;
-  status: 'Available' | 'Assigned';
+  stops: Array<{ name: string; order?: number }>;
+  status?: 'Available' | 'Assigned';
 };
+
 type Battery = {
-  id: number;
+  _id: string;
   imei: string;
-  vehicle?: string; // optional link to a vehicle registration
+  vehicleId?: string;
   status: 'Excellent' | 'Good' | 'Low';
-  charge: string; // e.g., "85%"
-  health: string; // e.g., "98%"
+  charge: number;
+  health: number;
   lastCharge?: string;
 };
-type FoodItem = { id: number; name: string; available: number };
-type FoodPick = { name: string; quantity: number };
-type Assignment = {
-  id: number;
-  rider: string;
-  vehicle: string;
-  battery: string; // IMEI or short label
-  route: string;
-  foodItems: FoodPick[];
-  assignedDate: string;
-  status: 'Active' | 'Completed';
+
+type FoodItem = {
+  _id: string;
+  name: string;
+  price: number;
+  category: string;
+  unit?: string;
+  totalQuantity?: { amount: number; unit: string };
+  imageUrl?: string;
 };
 
-/* ---------- Sample data (parity with web + batteries) ---------- */
-const riders: Rider[] = [
-  { id: 1, name: 'Mike Rodriguez', status: 'Available', route: 'None' },
-  { id: 2, name: 'Sarah Chen', status: 'Available', route: 'None' },
-  { id: 3, name: 'James Wilson', status: 'Active', route: 'Downtown Route A' },
-  { id: 4, name: 'Emily Davis', status: 'Available', route: 'None' },
-];
+type InventoryItem = {
+  foodItem: string;
+  name: string;
+  quantity: number;
+  locked: number;
+  available: number;
+  price: number;
+};
 
-const vehicles: Vehicle[] = [
-  { id: 1, registration: 'FC-001', type: 'Cart', status: 'Available' },
-  { id: 2, registration: 'FC-002', type: 'Cart', status: 'Available' },
-  { id: 3, registration: 'FC-003', type: 'Cart', status: 'In Use' },
-  { id: 4, registration: 'FC-004', type: 'Bike', status: 'Available' },
-];
+type AssignmentInventoryItem = {
+  foodItem: {
+    _id: string;
+    name: string;
+    price: number;
+  };
+  quantityAssigned: number;
+  quantityRemaining: number;
+  quantitySold: number;
+};
 
-const routes: Route[] = [
-  { id: 1, name: 'Downtown Route A', stops: 5, status: 'Available' },
-  { id: 2, name: 'Suburban Route B', stops: 4, status: 'Available' },
-  { id: 3, name: 'Beach Route C', stops: 6, status: 'Available' },
-];
+type Assignment = {
+  _id: string;
+  rider: {
+    _id: string;
+    name: string;
+  } | null;
+  vehicle: {
+    _id: string;
+    registrationNo: string;
+  } | null;
+  battery: {
+    _id: string;
+    imei: string;
+  } | null;
+  route: {
+    _id: string;
+    name: string;
+  } | null;
+  inventory: AssignmentInventoryItem[];
+  date: string;
+  status: 'active' | 'completed' | 'cancelled' | 'pending';
+  createdAt: string;
+  closedAt?: string;
+  cancellationReason?: string;
+};
 
-const batteries: Battery[] = [
-  {
-    id: 1,
-    imei: '356938035643809',
-    vehicle: 'FC-001',
-    status: 'Good',
-    charge: '85%',
-    health: '98%',
-    lastCharge: '2h ago',
-  },
-  {
-    id: 2,
-    imei: '356938035643810',
-    vehicle: 'FC-002',
-    status: 'Low',
-    charge: '20%',
-    health: '75%',
-    lastCharge: '8h ago',
-  },
-  {
-    id: 3,
-    imei: '356938035643811',
-    vehicle: 'FC-003',
-    status: 'Excellent',
-    charge: '92%',
-    health: '100%',
-    lastCharge: '1h ago',
-  },
-  {
-    id: 4,
-    imei: '356938035643812',
-    vehicle: 'FC-004',
-    status: 'Good',
-    charge: '67%',
-    health: '89%',
-    lastCharge: '4h ago',
-  },
-];
+type FoodPick = {
+  foodItemId: string;
+  name: string;
+  quantity: number;
+  price: number;
+  available: number;
+};
 
-const foodItems: FoodItem[] = [
-  { id: 1, name: 'Poha', available: 50 },
-  { id: 2, name: 'Vada Pav', available: 30 },
-  { id: 3, name: 'Chai', available: 100 },
-  { id: 4, name: 'Water Bottle', available: 75 },
-];
+type TeamResponse = {
+  ok: boolean;
+  team: {
+    riders: Rider[];
+    vehicles: Vehicle[];
+    routes: Route[];
+    batteries: Battery[];
+    cooks: any[];
+    refillCoordinators: any[];
+    activeAssignments?: Array<{
+      vehicleId: string;
+      batteryId: string;
+      riderId: string;
+    }>;
+  };
+};
 
-const initialAssignments: Assignment[] = [
-  {
-    id: 1,
-    rider: 'James Wilson',
-    vehicle: 'FC-003',
-    battery: '356938035643811',
-    route: 'Downtown Route A',
-    foodItems: [
-      { name: 'Poha', quantity: 20 },
-      { name: 'Chai', quantity: 30 },
-    ],
-    assignedDate: '2024-01-15',
-    status: 'Active',
-  },
-];
+type AvailableItemsResponse = {
+  ok: boolean;
+  items: Array<{
+    foodItemId: string;
+    name: string;
+    price: number;
+    category: string;
+    totalQuantity: number;
+    locked: number;
+    available: number;
+    imageUrl?: string;
+  }>;
+  summary: {
+    totalItems: number;
+    totalAvailable: number;
+  };
+};
+
+type AssignmentsResponse = {
+  ok: boolean;
+  assignments?: Assignment[];
+  summary?: any;
+};
 
 /* ---------- Small Badge ---------- */
 function Badge({
@@ -173,7 +188,7 @@ function Badge({
 }
 
 /* ---------- Bottom-sheet style picker ---------- */
-function PickerSheet<T extends { id: number } & Record<string, any>>({
+function PickerSheet<T extends { _id: string } & Record<string, any>>({
   visible,
   onClose,
   title,
@@ -197,38 +212,34 @@ function PickerSheet<T extends { id: number } & Record<string, any>>({
       visible={visible}
       onRequestClose={onClose}
     >
-      <Pressable
-        style={styles.sheetBackdrop}
-        onPress={onClose}
-      />
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
       <View style={styles.sheet}>
         <View style={styles.sheetHeader}>
           <Text style={styles.sheetTitle}>{title}</Text>
           <Pressable onPress={onClose}>
-            <Feather
-              name='x'
-              size={20}
-            />
+            <Feather name='x' size={20} />
           </Pressable>
         </View>
         <ScrollView>
-          {items.map((o) => (
-            <Pressable
-              key={o.id}
-              style={styles.optionRow}
-              onPress={() => {
-                onSelect(o);
-                onClose();
-              }}
-            >
-              <View
-                style={[styles.row, { alignItems: 'center', gap: 10, flex: 1 }]}
+          {!items || items.length === 0 ? (
+            <Text style={styles.emptyText}>No items available</Text>
+          ) : (
+            items.map((o) => (
+              <Pressable
+                key={o._id}
+                style={styles.optionRow}
+                onPress={() => {
+                  onSelect(o);
+                  onClose();
+                }}
               >
-                {renderLeft(o)}
-              </View>
-              <View>{renderRight ? renderRight(o) : null}</View>
-            </Pressable>
-          ))}
+                <View style={[styles.row, { alignItems: 'center', gap: 10, flex: 1 }]}>
+                  {renderLeft(o)}
+                </View>
+                <View>{renderRight ? renderRight(o) : null}</View>
+              </Pressable>
+            ))
+          )}
         </ScrollView>
       </View>
     </Modal>
@@ -237,8 +248,17 @@ function PickerSheet<T extends { id: number } & Record<string, any>>({
 
 /* ---------- Main Screen ---------- */
 export default function AssignRiderScreen() {
-  const [assignments, setAssignments] =
-    useState<Assignment[]>(initialAssignments);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Data states
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [batteries, setBatteries] = useState<Battery[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
 
   // Modal open
   const [isOpen, setIsOpen] = useState(false);
@@ -252,7 +272,7 @@ export default function AssignRiderScreen() {
   // Food selection
   const [selectedFoodItems, setSelectedFoodItems] = useState<FoodPick[]>([]);
   const [foodPickerOpen, setFoodPickerOpen] = useState(false);
-  const [currentFoodItem, setCurrentFoodItem] = useState<FoodItem | null>(null);
+  const [currentFoodItem, setCurrentFoodItem] = useState<InventoryItem | null>(null);
   const [currentQuantity, setCurrentQuantity] = useState<string>('');
 
   // Picker toggles
@@ -261,36 +281,206 @@ export default function AssignRiderScreen() {
   const [routeOpen, setRouteOpen] = useState(false);
   const [batteryOpen, setBatteryOpen] = useState(false);
 
+  // ========== Fetch Available Items ==========
+  const fetchAvailableItems = useCallback(async () => {
+    try {
+      const res = await api.get<AvailableItemsResponse>("/api/supervisor/assignments/available-items");
+      if (res?.ok && Array.isArray(res?.items)) {
+        // Transform to match InventoryItem type
+        const items = res.items.map((item) => ({
+          foodItem: item?.foodItemId || '',
+          name: item?.name || 'Unknown',
+          quantity: item?.totalQuantity || 0,
+          locked: item?.locked || 0,
+          available: item?.available || 0,
+          price: item?.price || 0,
+        }));
+        setInventory(items);
+      } else {
+        setInventory([]);
+      }
+    } catch (err) {
+      console.error("Failed to fetch available items:", err);
+      setInventory([]);
+    }
+  }, []);
+
+  // ========== Check Resource Availability ==========
+  const checkResourceAvailability = async (): Promise<boolean> => {
+    try {
+      // Get fresh team data
+      const teamRes = await api.get<TeamResponse>("/api/supervisor/my-team");
+      
+      if (!teamRes?.ok || !teamRes?.team) {
+        Alert.alert("Error", "Could not verify resource availability");
+        return false;
+      }
+
+      const { vehicles = [], batteries = [], riders = [] } = teamRes.team || {};
+
+      // Check if selected resources are still available
+      const vehicleStillAvailable = vehicles.some(v => v?._id === selectedVehicle?._id);
+      const batteryStillAvailable = batteries.some(b => b?._id === selectedBattery?._id);
+      const riderStillAvailable = riders.some(r => r?._id === selectedRider?._id && r?.status !== 'Active');
+
+      if (!vehicleStillAvailable) {
+        Alert.alert("Not Available", "Selected vehicle is no longer available");
+        return false;
+      }
+
+      if (!batteryStillAvailable) {
+        Alert.alert("Not Available", "Selected battery is no longer available");
+        return false;
+      }
+
+      if (!riderStillAvailable) {
+        Alert.alert("Not Available", "Selected rider is no longer available");
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Resource check error:", error);
+      Alert.alert("Error", "Failed to verify resource availability");
+      return false;
+    }
+  };
+
+  // ========== Fetch All Data ==========
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch team data (riders, vehicles, routes, batteries)
+      const teamRes = await api.get<TeamResponse>("/api/supervisor/my-team");
+      
+      if (teamRes?.ok && teamRes?.team) {
+        setRiders(Array.isArray(teamRes.team.riders) ? teamRes.team.riders : []);
+        setVehicles(Array.isArray(teamRes.team.vehicles) ? teamRes.team.vehicles : []);
+        setRoutes(Array.isArray(teamRes.team.routes) ? teamRes.team.routes : []);
+        setBatteries(Array.isArray(teamRes.team.batteries) ? teamRes.team.batteries : []);
+      }
+
+      // Fetch available items from inventory
+      await fetchAvailableItems();
+
+      // Fetch today's assignments
+      try {
+        const assignmentsRes = await api.get<AssignmentsResponse>("/api/supervisor/assignments/today");
+        
+        // Safely process assignments with null checks
+        const rawAssignments = assignmentsRes?.assignments || [];
+        
+        if (Array.isArray(rawAssignments)) {
+          // Filter out invalid assignments and ensure all fields exist
+          const validAssignments = rawAssignments
+            .filter(a => a && a._id) // Basic validation
+            .map(a => ({
+              _id: a._id || '',
+              rider: a?.rider ? { 
+                _id: a.rider._id || 'unknown', 
+                name: a.rider.name || 'Unknown Rider' 
+              } : null,
+              vehicle: a?.vehicle ? { 
+                _id: a.vehicle._id || 'unknown', 
+                registrationNo: a.vehicle.registrationNo || 'Unknown Vehicle' 
+              } : null,
+              battery: a?.battery ? { 
+                _id: a.battery._id || 'unknown', 
+                imei: a.battery.imei || 'Unknown Battery' 
+              } : null,
+              route: a?.route ? { 
+                _id: a.route._id || 'unknown', 
+                name: a.route.name || 'Unknown Route' 
+              } : null,
+              inventory: Array.isArray(a?.inventory) 
+                ? a.inventory.map(item => ({
+                    foodItem: item?.foodItem ? {
+                      _id: item.foodItem._id || 'unknown',
+                      name: item.foodItem.name || 'Unknown Item',
+                      price: item.foodItem.price || 0
+                    } : { _id: 'unknown', name: 'Unknown Item', price: 0 },
+                    quantityAssigned: item?.quantityAssigned || 0,
+                    quantityRemaining: item?.quantityRemaining || 0,
+                    quantitySold: item?.quantitySold || 0
+                  }))
+                : [],
+              date: a?.date || new Date().toISOString(),
+              status: a?.status || 'pending',
+              createdAt: a?.createdAt || new Date().toISOString(),
+              closedAt: a?.closedAt,
+              cancellationReason: a?.cancellationReason
+            }));
+          
+          setAssignments(validAssignments);
+        } else {
+          setAssignments([]);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch assignments", err);
+        setAssignments([]);
+      }
+
+    } catch (error) {
+      console.error("Fetch error:", error);
+      Alert.alert("Error", "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchAvailableItems]);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+  }, [fetchData]);
+
+  // ========== Computed Values ==========
   const availableRiders = useMemo(
-    () => riders.filter((r) => r.status === 'Available'),
-    []
+    () => (Array.isArray(riders) ? riders.filter(r => r && r.status !== 'Active') : []),
+    [riders]
   );
+
   const availableVehicles = useMemo(
-    () => vehicles.filter((v) => v.status === 'Available'),
-    []
+    () => (Array.isArray(vehicles) ? vehicles.filter(v => v && v.status === 'Available') : []),
+    [vehicles]
   );
+
+  const availableRoutes = useMemo(
+    () => (Array.isArray(routes) ? routes.filter(r => r && r.status !== 'Assigned') : []),
+    [routes]
+  );
+
+  const availableBatteries = useMemo(
+    () => (Array.isArray(batteries) ? batteries.filter(b => b && b.status !== 'Low' && (b.health || 0) > 70) : []),
+    [batteries]
+  );
+
   const remainingFoodOptions = useMemo(
-    () =>
-      foodItems.filter(
-        (fi) => !selectedFoodItems.find((s) => s.name === fi.name)
-      ),
-    [selectedFoodItems]
+    () => (Array.isArray(inventory) ? inventory.filter(
+      (item) => item && item.available > 0 && 
+      !selectedFoodItems.find((s) => s && s.foodItemId === item.foodItem)
+    ) : []),
+    [inventory, selectedFoodItems]
   );
-  // Batteries: you can filter here, e.g. exclude "Low" if you want
-  const availableBatteries = useMemo(() => batteries, []);
 
   const canCreate =
     !!selectedRider &&
     !!selectedVehicle &&
-    !!selectedBattery && // battery required
+    !!selectedBattery &&
     !!selectedRoute &&
     selectedFoodItems.length > 0;
 
   const totalItems = useMemo(
-    () => selectedFoodItems.reduce((sum, i) => sum + i.quantity, 0),
+    () => selectedFoodItems.reduce((sum, i) => sum + (i?.quantity || 0), 0),
     [selectedFoodItems]
   );
 
+  // ========== Actions ==========
   const resetModal = () => {
     setSelectedRider(null);
     setSelectedVehicle(null);
@@ -301,59 +491,181 @@ export default function AssignRiderScreen() {
     setCurrentQuantity('');
   };
 
+  const openAssignmentModal = async () => {
+    await fetchAvailableItems();
+    setIsOpen(true);
+  };
+
   const addFoodItem = () => {
-    if (!currentFoodItem) return Alert.alert('Select an item');
-    const qty = Math.max(
-      0,
-      Math.min(
-        Number(currentQuantity.replace(/[^\d]/g, '')) || 0,
-        currentFoodItem.available
-      )
-    );
-    if (!qty) return Alert.alert('Enter a valid quantity');
-    if (selectedFoodItems.find((s) => s.name === currentFoodItem.name)) {
-      return Alert.alert('Item already added');
+    if (!currentFoodItem) {
+      Alert.alert('Error', 'Please select a food item');
+      return;
     }
+
+    const qty = Number(currentQuantity.replace(/[^\d]/g, '')) || 0;
+    
+    if (qty <= 0) {
+      Alert.alert('Error', 'Please enter a valid quantity');
+      return;
+    }
+
+    if (qty > (currentFoodItem.available || 0)) {
+      Alert.alert('Error', `Only ${currentFoodItem.available} items available`);
+      return;
+    }
+
+    if (selectedFoodItems.find((s) => s?.foodItemId === currentFoodItem.foodItem)) {
+      Alert.alert('Error', 'Item already added');
+      return;
+    }
+
     setSelectedFoodItems((prev) => [
       ...prev,
-      { name: currentFoodItem.name, quantity: qty },
+      {
+        foodItemId: currentFoodItem.foodItem,
+        name: currentFoodItem.name || 'Unknown',
+        quantity: qty,
+        price: currentFoodItem.price || 0,
+        available: currentFoodItem.available || 0,
+      },
     ]);
+
     setCurrentFoodItem(null);
     setCurrentQuantity('');
   };
 
-  const removeFoodItem = (name: string) => {
-    setSelectedFoodItems((prev) => prev.filter((f) => f.name !== name));
+  const removeFoodItem = (foodItemId: string) => {
+    setSelectedFoodItems((prev) => prev.filter((f) => f?.foodItemId !== foodItemId));
   };
 
-  const createAssignment = () => {
+  const validateInventory = async (): Promise<boolean> => {
+    try {
+      const res = await api.get<AvailableItemsResponse>("/api/supervisor/assignments/available-items");
+      const currentInventory = (res?.items) || [];
+
+      for (const item of selectedFoodItems) {
+        const stockItem = currentInventory.find(i => i?.foodItemId === item?.foodItemId);
+        if (!stockItem || (stockItem.available || 0) < (item?.quantity || 0)) {
+          Alert.alert(
+            "Insufficient Stock",
+            `${item?.name || 'Item'} only has ${stockItem?.available || 0} available`
+          );
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      console.error("Validation error:", error);
+      Alert.alert("Error", "Failed to validate inventory");
+      return false;
+    }
+  };
+
+  const createAssignment = async () => {
     if (!canCreate) return;
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = String(today.getMonth() + 1).padStart(2, '0');
-    const d = String(today.getDate()).padStart(2, '0');
-    const newAssignment: Assignment = {
-      id: assignments.length
-        ? Math.max(...assignments.map((a) => a.id)) + 1
-        : 1,
-      rider: selectedRider!.name,
-      vehicle: selectedVehicle!.registration,
-      battery: selectedBattery!.imei,
-      route: selectedRoute!.name,
-      foodItems: selectedFoodItems,
-      assignedDate: `${y}-${m}-${d}`,
-      status: 'Active',
-    };
-    setAssignments((prev) => [newAssignment, ...prev]);
-    setIsOpen(false);
-    resetModal();
+
+    const isValid = await validateInventory();
+    if (!isValid) return;
+
+    const resourcesAvailable = await checkResourceAvailability();
+    if (!resourcesAvailable) return;
+
+    try {
+      setSaving(true);
+
+      const assignmentRes = await api.post("/api/supervisor/assignments/create", {
+        routeId: selectedRoute!._id,
+        riderId: selectedRider!._id,
+        vehicleId: selectedVehicle!._id,
+        batteryId: selectedBattery!._id,
+        items: selectedFoodItems.map(item => ({
+          foodItemId: item.foodItemId,
+          quantity: item.quantity
+        }))
+      });
+
+      if (assignmentRes?.ok) {
+        await fetchData();
+        setIsOpen(false);
+        resetModal();
+        Alert.alert('Success', 'Assignment created successfully');
+      }
+    } catch (err: any) {
+      console.error("Create assignment error:", err);
+      
+      if (err?.message?.includes("already assigned")) {
+        Alert.alert('Resource Unavailable', err.message);
+        await fetchData();
+      } else {
+        Alert.alert('Error', err?.message || 'Failed to create assignment');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteAssignment = async (assignmentId: string) => {
     Alert.alert(
-      'Assignment Created',
-      'Rider, vehicle, battery, route and items assigned successfully.'
+      "Cancel Assignment",
+      "Are you sure you want to cancel this assignment? All resources will be freed and inventory will be unlocked.",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setSaving(true);
+              
+              const res = await api.delete(`/api/supervisor/assignments/${assignmentId}`);
+              
+              if (res?.ok) {
+                await fetchData();
+                Alert.alert("Success", "Assignment cancelled successfully");
+              }
+            } catch (err: any) {
+              console.error("Delete error:", err);
+              Alert.alert("Error", err?.message || "Failed to cancel assignment");
+            } finally {
+              setSaving(false);
+            }
+          }
+        }
+      ]
     );
   };
 
-  const batteryStatusDot = (status: Battery['status']) => {
+  const closeAssignment = async (assignmentId: string) => {
+    Alert.alert(
+      "Close Assignment",
+      "Are you sure you want to close this assignment? This will finalize all sales and free up resources.",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Close",
+          onPress: async () => {
+            try {
+              setSaving(true);
+              
+              const res = await api.post(`/api/supervisor/assignments/${assignmentId}/close`);
+              
+              if (res?.ok) {
+                await fetchData();
+                Alert.alert("Success", "Assignment closed successfully");
+              }
+            } catch (err: any) {
+              console.error("Close error:", err);
+              Alert.alert("Error", err?.message || "Failed to close assignment");
+            } finally {
+              setSaving(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const batteryStatusDot = (status: Battery['status'] = 'Good') => {
     const bg =
       status === 'Excellent'
         ? '#16a34a'
@@ -363,100 +675,276 @@ export default function AssignRiderScreen() {
     return <View style={[styles.badgeDot, { backgroundColor: bg }]} />;
   };
 
+  const getBatteryDisplay = (battery: Battery | null) => {
+    if (!battery) return 'Unknown Battery';
+    return `${battery.imei?.slice(-4) || 'N/A'} • ${battery.charge || 0}% • ${battery.health || 0}%`;
+  };
+
+  const getStatusColor = (status: string = 'pending') => {
+    switch (status) {
+      case 'active': return '#16a34a';
+      case 'completed': return '#6b7280';
+      case 'cancelled': return '#dc2626';
+      default: return '#6b7280';
+    }
+  };
+
+  const getStatusText = (status: string = 'pending') => {
+    switch (status) {
+      case 'active': return 'Active';
+      case 'completed': return 'Completed';
+      case 'cancelled': return 'Cancelled';
+      default: return status || 'Unknown';
+    }
+  };
+
+  const getRiderName = (rider: any): string => {
+    return rider?.name || 'Unknown Rider';
+  };
+
+  const getVehicleReg = (vehicle: any): string => {
+    return vehicle?.registrationNo || 'Unknown Vehicle';
+  };
+
+  const getBatteryImei = (battery: any): string => {
+    return battery?.imei?.slice(-4) || 'N/A';
+  };
+
+  const getRouteName = (route: any): string => {
+    return route?.name || 'Unknown Route';
+  };
+
+  const getInventoryTotal = (inventory: AssignmentInventoryItem[] = []): number => {
+    return (inventory || []).reduce((sum, i) => sum + (i?.quantityAssigned || 0), 0);
+  };
+
+  const getSoldTotal = (inventory: AssignmentInventoryItem[] = []): number => {
+    return (inventory || []).reduce((sum, i) => sum + (i?.quantitySold || 0), 0);
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.page, { justifyContent: 'center', alignItems: 'center', flex: 1 }]}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={{ marginTop: 12, color: '#6b7280' }}>Loading team data...</Text>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView
+      contentContainerStyle={styles.page}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       {/* Header */}
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.h1}>Rider Assignment</Text>
           <Text style={styles.subtle}>
-            Assign riders to vehicles, batteries, routes, and food inventory
+            Assign riders with real-time inventory tracking
           </Text>
         </View>
       </View>
 
       {/* New actions row for the button */}
       <View style={styles.actionsRow}>
-        {/* (we’ll replace this Pressable with a gradient below) */}
-        <Pressable onPress={() => setIsOpen(true)}>
+        <Pressable onPress={openAssignmentModal}>
           <LinearGradient
-            colors={['#FDE047', '#F59E0B']} // yellow → amber
+            colors={['#FDE047', '#F59E0B']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.gradientBtn} // new style below
+            style={styles.gradientBtn}
           >
-            <Feather
-              name='plus'
-              size={16}
-              color='#ffffff'
-              style={{ marginRight: 8 }}
-            />
+            <Feather name='plus' size={16} color='#ffffff' style={{ marginRight: 8 }} />
             <Text style={styles.gradientBtnText}>New Assignment</Text>
           </LinearGradient>
         </Pressable>
+      </View>
+
+      {/* Inventory Summary Card */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Today's Inventory</Text>
+        <Text style={styles.subtle}>Available stock for assignment</Text>
+        
+        <View style={styles.inventoryStats}>
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>
+              {Array.isArray(inventory) ? inventory.reduce((sum, i) => sum + (i?.available || 0), 0) : 0}
+            </Text>
+            <Text style={styles.statLabel}>Total Available</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>
+              {Array.isArray(inventory) ? inventory.reduce((sum, i) => sum + (i?.locked || 0), 0) : 0}
+            </Text>
+            <Text style={styles.statLabel}>Locked</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{Array.isArray(inventory) ? inventory.length : 0}</Text>
+            <Text style={styles.statLabel}>Items</Text>
+          </View>
+        </View>
+
+        <View style={styles.chipsWrap}>
+          {Array.isArray(inventory) && inventory.slice(0, 5).map((item, index) => (
+            <View key={item?.foodItem || index.toString()} style={styles.chip}>
+              <Text style={styles.chipText}>
+                {item?.name || 'Unknown'}: {item?.available || 0}
+              </Text>
+            </View>
+          ))}
+          {Array.isArray(inventory) && inventory.length > 5 && (
+            <View style={styles.chip}>
+              <Text style={styles.chipText}>+{inventory.length - 5} more</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Current Assignments */}
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Current Assignments</Text>
         <Text style={styles.subtle}>
-          Active rider assignments and their details
+          Active rider assignments and their inventory
         </Text>
 
         <View style={{ height: 12 }} />
-        <View style={{ rowGap: 12 }}>
-          {assignments.map((a) => (
-            <View
-              key={a.id}
-              style={styles.assignmentCard}
-            >
-              <View style={[styles.rowBetween, { marginBottom: 8 }]}>
-                <View style={[styles.row, { alignItems: 'center', gap: 10 }]}>
-                  <Badge
-                    text={a.status}
-                    color={a.status === 'Active' ? '#16a34a' : '#6b7280'}
-                    variant='solid'
-                  />
-                  <Text style={{ fontWeight: '700', color: '#111827' }}>
-                    {a.rider}
-                  </Text>
-                </View>
-                <Text style={styles.subtleSmall}>
-                  Assigned: {a.assignedDate}
-                </Text>
-              </View>
+        {!Array.isArray(assignments) || assignments.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Feather name="truck" size={40} color="#d1d5db" />
+            <Text style={[styles.subtle, { marginTop: 8 }]}>No active assignments</Text>
+          </View>
+        ) : (
+          <View style={{ rowGap: 12 }}>
+            {assignments.map((a) => {
+              // Safety check - if assignment is null/undefined, skip
+              if (!a || !a._id) return null;
+              
+              const inventory = Array.isArray(a.inventory) ? a.inventory : [];
+              const totalAssigned = getInventoryTotal(inventory);
+              const totalSold = getSoldTotal(inventory);
+              const progressPercent = totalAssigned > 0 ? (totalSold / totalAssigned) * 100 : 0;
+              
+              return (
+                <View key={a._id} style={styles.assignmentCard}>
+                  <View style={[styles.rowBetween, { marginBottom: 8 }]}>
+                    <View style={[styles.row, { alignItems: 'center', gap: 10, flex: 1 }]}>
+                      <Badge
+                        text={getStatusText(a.status)}
+                        color={getStatusColor(a.status)}
+                        variant='solid'
+                      />
+                      <Text style={{ fontWeight: '700', color: '#111827' }} numberOfLines={1}>
+                        {getRiderName(a.rider)}
+                      </Text>
+                    </View>
+                    <View style={[styles.row, { gap: 8, alignItems: 'center' }]}>
+                      <Text style={styles.subtleSmall}>
+                        {a.date ? new Date(a.date).toLocaleDateString() : 'N/A'}
+                      </Text>
+                      
+                      {/* Action buttons based on status */}
+                      {a.status === 'active' && (
+                        <>
+                          <Pressable 
+                            onPress={() => closeAssignment(a._id)}
+                            style={({ pressed }) => [
+                              styles.iconBtn,
+                              pressed && { opacity: 0.7 },
+                              { padding: 4 }
+                            ]}
+                          >
+                            <Feather name="check-circle" size={16} color="#16a34a" />
+                          </Pressable>
+                          <Pressable 
+                            onPress={() => deleteAssignment(a._id)}
+                            style={({ pressed }) => [
+                              styles.iconBtn,
+                              pressed && { opacity: 0.7 },
+                              { padding: 4 }
+                            ]}
+                          >
+                            <Feather name="trash-2" size={16} color="#dc2626" />
+                          </Pressable>
+                        </>
+                      )}
+                      
+                      {a.status === 'pending' && (
+                        <Pressable 
+                          onPress={() => deleteAssignment(a._id)}
+                          style={({ pressed }) => [
+                            styles.iconBtn,
+                            pressed && { opacity: 0.7 },
+                            { padding: 4 }
+                          ]}
+                        >
+                          <Feather name="trash-2" size={16} color="#dc2626" />
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
 
-              <View style={styles.assignmentGrid}>
-                <Text>
-                  <Text style={styles.bold}>Vehicle:</Text> {a.vehicle}
-                </Text>
-                <Text>
-                  <Text style={styles.bold}>Battery:</Text> {a.battery}
-                </Text>
-                <Text>
-                  <Text style={styles.bold}>Route:</Text> {a.route}
-                </Text>
-                <Text>
-                  <Text style={styles.bold}>Items:</Text> {a.foodItems.length}{' '}
-                  items
-                </Text>
-              </View>
-
-              <View style={styles.chipsWrap}>
-                {a.foodItems.map((fi, idx) => (
-                  <View
-                    key={`${fi.name}-${idx}`}
-                    style={styles.chip}
-                  >
-                    <Text style={styles.chipText}>
-                      {fi.name}: {fi.quantity}
+                  <View style={styles.assignmentGrid}>
+                    <Text>
+                      <Text style={styles.bold}>Vehicle:</Text> {getVehicleReg(a.vehicle)}
+                    </Text>
+                    <Text>
+                      <Text style={styles.bold}>Battery:</Text> {getBatteryImei(a.battery)}
+                    </Text>
+                    <Text>
+                      <Text style={styles.bold}>Route:</Text> {getRouteName(a.route)}
                     </Text>
                   </View>
-                ))}
-              </View>
-            </View>
-          ))}
-        </View>
+
+                  <View style={styles.chipsWrap}>
+                    {inventory.map((item, idx) => (
+                      <View key={idx} style={styles.chip}>
+                        <Text style={styles.chipText}>
+                          {item?.foodItem?.name || 'Unknown'}: {item?.quantityAssigned || 0} 
+                          {(item?.quantitySold || 0) > 0 && ` (${item.quantitySold} sold)`}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Progress for sold items */}
+                  {a.status === 'active' && totalSold > 0 && (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={styles.subtleSmall}>Sales Progress</Text>
+                      <View style={styles.progressTrack}>
+                        <View 
+                          style={[
+                            styles.progressFill, 
+                            { width: `${Math.min(progressPercent, 100)}%` }
+                          ]} 
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Show cancellation info if cancelled */}
+                  {a.status === 'cancelled' && (
+                    <View style={{ marginTop: 8, padding: 8, backgroundColor: '#fee2e2', borderRadius: 8 }}>
+                      <Text style={{ color: '#dc2626', fontSize: 12 }}>
+                        Cancelled • Resources freed
+                        {a.closedAt && ` at ${new Date(a.closedAt).toLocaleTimeString()}`}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Show completion info */}
+                  {a.status === 'completed' && a.closedAt && (
+                    <View style={{ marginTop: 8, padding: 8, backgroundColor: '#f0fdf4', borderRadius: 8 }}>
+                      <Text style={{ color: '#16a34a', fontSize: 12 }}>
+                        Completed at {new Date(a.closedAt).toLocaleTimeString()}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       {/* New Assignment Modal */}
@@ -466,23 +954,17 @@ export default function AssignRiderScreen() {
         visible={isOpen}
         onRequestClose={() => setIsOpen(false)}
       >
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setIsOpen(false)}
-        />
+        <Pressable style={styles.modalBackdrop} onPress={() => setIsOpen(false)} />
         <View style={styles.modalCard}>
           <View style={[styles.rowBetween, { marginBottom: 10 }]}>
             <View>
               <Text style={styles.modalTitle}>Create Rider Assignment</Text>
               <Text style={styles.subtleSmall}>
-                Assign a rider to a vehicle, battery, route, and food inventory
+                Assign with real-time inventory tracking
               </Text>
             </View>
             <Pressable onPress={() => setIsOpen(false)}>
-              <Feather
-                name='x'
-                size={22}
-              />
+              <Feather name='x' size={22} />
             </Pressable>
           </View>
 
@@ -503,14 +985,10 @@ export default function AssignRiderScreen() {
                     }
                   >
                     {selectedRider
-                      ? `${selectedRider.name} - ${selectedRider.status}`
+                      ? selectedRider.name
                       : 'Choose rider'}
                   </Text>
-                  <Feather
-                    name='chevron-down'
-                    size={18}
-                    color='#6b7280'
-                  />
+                  <Feather name='chevron-down' size={18} color='#6b7280' />
                 </Pressable>
               </View>
               <View style={{ flex: 1 }}>
@@ -527,14 +1005,10 @@ export default function AssignRiderScreen() {
                     }
                   >
                     {selectedVehicle
-                      ? `${selectedVehicle.registration} - ${selectedVehicle.type}`
+                      ? `${selectedVehicle.registrationNo} - ${selectedVehicle.type}`
                       : 'Choose vehicle'}
                   </Text>
-                  <Feather
-                    name='chevron-down'
-                    size={18}
-                    color='#6b7280'
-                  />
+                  <Feather name='chevron-down' size={18} color='#6b7280' />
                 </Pressable>
               </View>
             </View>
@@ -554,14 +1028,10 @@ export default function AssignRiderScreen() {
                   }
                 >
                   {selectedBattery
-                    ? `${selectedBattery.imei} • ${selectedBattery.charge} • ${selectedBattery.health}`
+                    ? getBatteryDisplay(selectedBattery)
                     : 'Choose battery'}
                 </Text>
-                <Feather
-                  name='chevron-down'
-                  size={18}
-                  color='#6b7280'
-                />
+                <Feather name='chevron-down' size={18} color='#6b7280' />
               </Pressable>
             </View>
 
@@ -578,20 +1048,16 @@ export default function AssignRiderScreen() {
                   }
                 >
                   {selectedRoute
-                    ? `${selectedRoute.name} - ${selectedRoute.stops} stops`
+                    ? `${selectedRoute.name} - ${selectedRoute.stops?.length || 0} stops`
                     : 'Choose route'}
                 </Text>
-                <Feather
-                  name='chevron-down'
-                  size={18}
-                  color='#6b7280'
-                />
+                <Feather name='chevron-down' size={18} color='#6b7280' />
               </Pressable>
             </View>
 
             {/* Assign Food Items */}
             <View style={{ marginTop: 14 }}>
-              <Text style={styles.label}>Assign Food Items</Text>
+              <Text style={styles.label}>Assign Food Items (Available in Inventory)</Text>
               <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
                 <Pressable
                   style={[styles.inputLike, { flex: 1 }]}
@@ -608,52 +1074,37 @@ export default function AssignRiderScreen() {
                       ? `${currentFoodItem.name} (Available: ${currentFoodItem.available})`
                       : 'Select food item'}
                   </Text>
-                  <Feather
-                    name='chevron-down'
-                    size={18}
-                    color='#6b7280'
-                  />
+                  <Feather name='chevron-down' size={18} color='#6b7280' />
                 </Pressable>
                 <TextInput
                   style={[styles.qtyInput, { width: 80 }]}
                   placeholder='Qty'
                   keyboardType='number-pad'
                   value={currentQuantity}
-                  onChangeText={(t) =>
-                    setCurrentQuantity(t.replace(/[^\d]/g, ''))
-                  }
+                  onChangeText={(t) => setCurrentQuantity(t.replace(/[^\d]/g, ''))}
                 />
-                <Pressable
-                  style={styles.outlineBtn}
-                  onPress={addFoodItem}
-                >
-                  <Feather
-                    name='plus'
-                    size={16}
-                  />
+                <Pressable style={styles.outlineBtn} onPress={addFoodItem}>
+                  <Feather name='plus' size={16} />
                 </Pressable>
               </View>
 
               {selectedFoodItems.length > 0 && (
                 <View style={{ marginTop: 10 }}>
-                  <Text style={styles.label}>Selected Items</Text>
+                  <Text style={styles.label}>Selected Items (Will be locked)</Text>
                   <View style={{ rowGap: 8 }}>
                     {selectedFoodItems.map((fi) => (
-                      <View
-                        key={fi.name}
-                        style={styles.selectedRow}
-                      >
-                        <Text>
-                          {fi.name} - Qty: {fi.quantity}
-                        </Text>
+                      <View key={fi.foodItemId} style={styles.selectedRow}>
+                        <View>
+                          <Text style={{ fontWeight: '600' }}>{fi.name}</Text>
+                          <Text style={styles.subtleSmall}>
+                            Qty: {fi.quantity} • Price: ₹{fi.price}
+                          </Text>
+                        </View>
                         <Pressable
-                          onPress={() => removeFoodItem(fi.name)}
+                          onPress={() => removeFoodItem(fi.foodItemId)}
                           style={styles.iconBtn}
                         >
-                          <Feather
-                            name='x'
-                            size={16}
-                          />
+                          <Feather name='x' size={16} />
                         </Pressable>
                       </View>
                     ))}
@@ -662,103 +1113,58 @@ export default function AssignRiderScreen() {
               )}
             </View>
 
-            {/* Summary (only when complete) */}
+            {/* Summary */}
             {selectedRider &&
               selectedVehicle &&
               selectedBattery &&
               selectedRoute &&
               selectedFoodItems.length > 0 && (
-                <View
-                  style={{
-                    marginTop: 12,
-                    paddingTop: 12,
-                    borderTopWidth: 1,
-                    borderTopColor: '#eef1f5',
-                  }}
-                >
+                <View style={styles.summarySection}>
                   <Text style={styles.label}>Assignment Summary</Text>
                   <View style={{ rowGap: 6, marginTop: 6 }}>
-                    <View
-                      style={[styles.row, { alignItems: 'center', gap: 8 }]}
-                    >
-                      <Feather
-                        name='user-check'
-                        size={16}
-                      />
-                      <Text>Rider: {selectedRider.name}</Text>
+                    <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                      <Feather name='user-check' size={16} color="#2563eb" />
+                      <Text>Rider: <Text style={styles.bold}>{selectedRider.name}</Text></Text>
                     </View>
-                    <View
-                      style={[styles.row, { alignItems: 'center', gap: 8 }]}
-                    >
-                      <Feather
-                        name='truck'
-                        size={16}
-                      />
-                      <Text>Vehicle: {selectedVehicle.registration}</Text>
+                    <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                      <Feather name='truck' size={16} color="#2563eb" />
+                      <Text>Vehicle: <Text style={styles.bold}>{selectedVehicle.registrationNo}</Text></Text>
                     </View>
-                    <View
-                      style={[styles.row, { alignItems: 'center', gap: 8 }]}
-                    >
-                      <MaterialCommunityIcons
-                        name='battery'
-                        size={16}
-                      />
-                      <Text>
-                        Battery: {selectedBattery.imei} (
-                        {selectedBattery.charge}, {selectedBattery.health})
-                      </Text>
+                    <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                      <MaterialCommunityIcons name='battery' size={16} color="#2563eb" />
+                      <Text>Battery: <Text style={styles.bold}>{selectedBattery.imei.slice(-4)}</Text> ({selectedBattery.charge}%)</Text>
                     </View>
-                    <View
-                      style={[styles.row, { alignItems: 'center', gap: 8 }]}
-                    >
-                      <Feather
-                        name='map-pin'
-                        size={16}
-                      />
-                      <Text>Route: {selectedRoute.name}</Text>
+                    <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                      <Feather name='map-pin' size={16} color="#2563eb" />
+                      <Text>Route: <Text style={styles.bold}>{selectedRoute.name}</Text></Text>
                     </View>
-                    <View
-                      style={[styles.row, { alignItems: 'center', gap: 8 }]}
-                    >
-                      <Feather
-                        name='shopping-bag'
-                        size={16}
-                      />
-                      <Text>Items: {selectedFoodItems.length} food items</Text>
+                    <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                      <Feather name='shopping-bag' size={16} color="#2563eb" />
+                      <Text>Items: <Text style={styles.bold}>{selectedFoodItems.length}</Text> items, <Text style={styles.bold}>{totalItems}</Text> total quantity</Text>
                     </View>
                   </View>
                 </View>
               )}
 
             {/* Actions */}
-            <View
-              style={[
-                styles.row,
-                {
-                  gap: 10,
-                  marginTop: 14,
-                  paddingTop: 12,
-                  borderTopWidth: 1,
-                  borderTopColor: '#eef1f5',
-                },
-              ]}
-            >
+            <View style={styles.actionButtons}>
               <Pressable
                 onPress={createAssignment}
-                disabled={!canCreate}
+                disabled={!canCreate || saving}
                 style={({ pressed }) => [
                   styles.primaryBtn,
-                  (!canCreate || pressed) && { opacity: 0.9 },
+                  (!canCreate || pressed || saving) && { opacity: 0.9 },
                   { flex: 1, justifyContent: 'center' },
                 ]}
               >
-                <Feather
-                  name='check'
-                  size={16}
-                  color='#fff'
-                  style={{ marginRight: 8 }}
-                />
-                <Text style={styles.primaryBtnText}>Create Assignment</Text>
+                {saving ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Feather name='check' size={16} color='#fff' style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryBtnText}>Create Assignment</Text>
+                  </>
+                )}
               </Pressable>
               <Pressable
                 onPress={() => {
@@ -783,42 +1189,33 @@ export default function AssignRiderScreen() {
         visible={riderOpen}
         onClose={() => setRiderOpen(false)}
         title='Choose rider'
-        items={availableRiders}
+        items={availableRiders.filter(r => r)} // Filter out null/undefined
         renderLeft={(r: Rider) => (
           <>
-            <Feather
-              name='user'
-              size={16}
-              color='#111827'
-            />
-            <Text style={{ fontWeight: '600', color: '#111827' }}>
-              {r.name}
-            </Text>
+            <Feather name='user' size={16} color='#111827' />
+            <Text style={{ fontWeight: '600', color: '#111827' }}>{r.name}</Text>
           </>
         )}
         renderRight={(r: Rider) => (
           <Badge
-            text={r.status}
-            variant={r.status === 'Available' ? 'solid' : 'outline'}
-            color={r.status === 'Available' ? '#059669' : '#6b7280'}
+            text={r.status || 'Available'}
+            variant={r.status !== 'Active' ? 'solid' : 'outline'}
+            color={r.status !== 'Active' ? '#059669' : '#6b7280'}
           />
         )}
         onSelect={(r) => setSelectedRider(r)}
       />
+
       <PickerSheet
         visible={vehicleOpen}
         onClose={() => setVehicleOpen(false)}
         title='Choose vehicle'
-        items={availableVehicles}
+        items={availableVehicles.filter(v => v)}
         renderLeft={(v: Vehicle) => (
           <>
-            <Feather
-              name='truck'
-              size={16}
-              color='#111827'
-            />
+            <Feather name='truck' size={16} color='#111827' />
             <Text style={{ fontWeight: '600', color: '#111827' }}>
-              {v.registration} - {v.type}
+              {v.registrationNo} - {v.type}
             </Text>
           </>
         )}
@@ -831,78 +1228,67 @@ export default function AssignRiderScreen() {
         )}
         onSelect={(v) => setSelectedVehicle(v)}
       />
+
       <PickerSheet
         visible={batteryOpen}
         onClose={() => setBatteryOpen(false)}
         title='Choose battery'
-        items={availableBatteries}
+        items={availableBatteries.filter(b => b)}
         renderLeft={(b: Battery) => (
           <>
-            <MaterialCommunityIcons
-              name='battery'
-              size={16}
-              color='#111827'
-            />
+            <MaterialCommunityIcons name='battery' size={16} color='#111827' />
             <Text style={{ fontWeight: '600', color: '#111827' }}>
-              {b.imei} {b.vehicle ? `• ${b.vehicle}` : ''}
+              {b.imei.slice(-4)} • {b.charge}%
             </Text>
           </>
         )}
         renderRight={(b: Battery) => (
           <View style={[styles.row, { alignItems: 'center', gap: 6 }]}>
-            {(() => batteryStatusDot(b.status))()}
-            <Text style={styles.subtleSmall}>
-              {b.charge} • {b.health}
-            </Text>
+            {batteryStatusDot(b.status)}
+            <Text style={styles.subtleSmall}>Health: {b.health}%</Text>
           </View>
         )}
         onSelect={(b) => setSelectedBattery(b)}
       />
+
       <PickerSheet
         visible={routeOpen}
         onClose={() => setRouteOpen(false)}
         title='Choose route'
-        items={routes}
+        items={availableRoutes.filter(r => r)}
         renderLeft={(rt: Route) => (
           <>
-            <Feather
-              name='map'
-              size={16}
-              color='#111827'
-            />
+            <Feather name='map' size={16} color='#111827' />
             <Text style={{ fontWeight: '600', color: '#111827' }}>
-              {rt.name} - {rt.stops} stops
+              {rt.name} - {rt.stops?.length || 0} stops
             </Text>
           </>
         )}
         renderRight={(rt: Route) => (
           <Badge
-            text={rt.status}
-            variant={rt.status === 'Available' ? 'solid' : 'outline'}
-            color={rt.status === 'Available' ? '#059669' : '#6b7280'}
+            text={rt.status || 'Available'}
+            variant={rt.status !== 'Assigned' ? 'solid' : 'outline'}
+            color={rt.status !== 'Assigned' ? '#059669' : '#6b7280'}
           />
         )}
         onSelect={(rt) => setSelectedRoute(rt)}
       />
+
       <PickerSheet
         visible={foodPickerOpen}
         onClose={() => setFoodPickerOpen(false)}
-        title='Select food item'
-        items={remainingFoodOptions}
-        renderLeft={(f: FoodItem) => (
+        title='Select food item from inventory'
+        items={remainingFoodOptions.filter(f => f)}
+        renderLeft={(f: InventoryItem) => (
           <>
-            <Feather
-              name='box'
-              size={16}
-              color='#111827'
-            />
-            <Text style={{ fontWeight: '600', color: '#111827' }}>
-              {f.name}
-            </Text>
+            <Feather name='box' size={16} color='#111827' />
+            <Text style={{ fontWeight: '600', color: '#111827' }}>{f.name}</Text>
           </>
         )}
-        renderRight={(f: FoodItem) => (
-          <Text style={styles.subtleSmall}>Avail: {f.available}</Text>
+        renderRight={(f: InventoryItem) => (
+          <Text style={styles.subtleSmall}>
+            Avail: {f.available} • ₹{f.price}
+          </Text>
         )}
         onSelect={(f) => setCurrentFoodItem(f)}
       />
@@ -946,6 +1332,20 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
+
+  /* Inventory Stats */
+  inventoryStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginVertical: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#eef1f5',
+  },
+  statItem: { alignItems: 'center' },
+  statValue: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  statLabel: { fontSize: 11, color: '#6b7280', marginTop: 2 },
 
   /* input-like pressables */
   label: { fontSize: 12, fontWeight: '700', color: '#374151', marginBottom: 6 },
@@ -998,6 +1398,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   chipText: { color: '#111827', fontSize: 12, fontWeight: '700' },
+
+  /* progress */
+  progressTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#f1f5f9',
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#2563eb',
+  },
 
   /* buttons */
   primaryBtn: {
@@ -1092,6 +1506,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  emptyText: {
+    padding: 20,
+    textAlign: 'center',
+    color: '#6b7280',
   },
 
   /* helpers */
@@ -1111,13 +1532,24 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: '#fff',
   },
-
-  /* tiny badge-dot */
+  summarySection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#eef1f5',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#eef1f5',
+  },
   badgeDot: { width: 10, height: 10, borderRadius: 5 },
   actionsRow: {
-
     flexDirection: 'row',
-    justifyContent: 'flex-start', // use "flex-start" if you want it left-aligned
+    justifyContent: 'flex-start',
   },
   gradientBtn: {
     flexDirection: "row",
@@ -1125,7 +1557,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 12,
-    // optional subtle shadow to match your cards:
     shadowColor: "#0f172a",
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 4 },
@@ -1134,8 +1565,11 @@ const styles = StyleSheet.create({
   },
   gradientBtnText: {
     fontWeight: "800",
-    color: "#ffffff", // dark text reads better on yellow
+    color: "#ffffff",
   },
-  
-  
+  emptyState: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

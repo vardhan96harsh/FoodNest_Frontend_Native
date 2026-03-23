@@ -12,22 +12,25 @@ import {
 import { useRouter } from "expo-router";
 import { signInWithToken } from "@/lib/authStore";
 import { api } from "@/lib/api";
+// import { loginWithGoogle } from "@/lib/googleAuth"; // 👈 NEW
+import googleAuth from "@/lib/googleAuth";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
-import { useTranslation } from "react-i18next"; // 👈 ADD
+import { useTranslation } from "react-i18next";
 
 type Mode = "login" | "forgot" | "otp" | "reset";
 
 export default function Login() {
-  const { t } = useTranslation();         // 👈 ADD
+  const { t } = useTranslation();
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("login");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false); // 👈 NEW — separate loader
   const [showPassword, setShowPassword] = useState(false);
 
   // forgot password flow state
@@ -40,11 +43,12 @@ export default function Login() {
   const formAnim = useRef(new Animated.Value(1)).current;
   const buttonAnim = useRef(new Animated.Value(1)).current;
 
+  // ─── Existing email/password login (UNCHANGED) ───────────────────────────
   const handleLogin = async () => {
     if (!email || !password) {
       return Alert.alert(t("alerts.missingInfo.title"), t("alerts.missingInfo.msg"));
     }
-    
+
     setBusy(true);
     try {
       const res = await api.post("/api/auth/login", {
@@ -78,6 +82,23 @@ export default function Login() {
       setBusy(false);
     }
   };
+
+  // ─── NEW: Google login handler ────────────────────────────────────────────
+  const handleGoogleLogin = async () => {
+  setGoogleBusy(true);
+  try {
+    const result = await googleAuth.loginWithGoogle(); // ← changed
+    if (result.success) {
+      router.replace("/");
+    } else {
+      if (result.error !== "Login cancelled") {
+        Alert.alert("Google Login Failed", result.error || "Something went wrong");
+      }
+    }
+  } finally {
+    setGoogleBusy(false);
+  }
+};
 
   const requestOtp = async () => {
     if (!email) return Alert.alert(t("alerts.emailRequired.title"), t("alerts.emailRequired.msg"));
@@ -273,9 +294,35 @@ export default function Login() {
       {/* Buttons */}
       <Animated.View style={[styles.buttonContainer, { opacity: 1 }]}>
         {mode === "login" && (
-          <YellowButton onPress={handleLogin} disabled={busy}>
-            {t("buttons.login")}
-          </YellowButton>
+          <>
+            <YellowButton onPress={handleLogin} disabled={busy || googleBusy}>
+              {t("buttons.login")}
+            </YellowButton>
+
+            {/* ─── Divider ─── */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* ─── Google Button ─── */}
+            <Pressable
+              onPress={handleGoogleLogin}
+              disabled={busy || googleBusy}
+              style={[styles.googleButton, (busy || googleBusy) && { opacity: 0.6 }]}
+            >
+              {googleBusy ? (
+                <ActivityIndicator color="#444" />
+              ) : (
+                <>
+                  {/* Google "G" logo using text — no extra package needed */}
+                  <Text style={styles.googleIcon}>G</Text>
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </>
+              )}
+            </Pressable>
+          </>
         )}
 
         {mode === "forgot" && (
@@ -321,11 +368,11 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, backgroundColor: "#fffbe9" },
-  brandingContainer: { alignItems: "center", justifyContent: "center", marginTop: 80, marginBottom: 60 },
+  container: { flex: 1, padding: 48, backgroundColor: "#fffbe9" },
+  brandingContainer: { alignItems: "center", justifyContent: "center", marginTop: 0, marginBottom: 20 },
   mainTitle: { fontSize: 36, fontWeight: "800", color: "#7A4F01", textAlign: "center", marginBottom: 8, letterSpacing: 1 },
   slogan: { fontSize: 16, fontWeight: "500", color: "#8c6e54", textAlign: "center", fontStyle: "italic", letterSpacing: 0.5 },
-  formContainer: { gap: 16, marginBottom: 24 },
+  formContainer: { gap: 16, marginBottom: 4 },
   inputContainer: { flexDirection: "row", alignItems: "center", borderWidth: 2, borderColor: "#f1e2b6", borderRadius: 16, backgroundColor: "white", paddingHorizontal: 16, paddingVertical: 4 },
   inputIcon: { marginRight: 12 },
   textInput: { flex: 1, paddingVertical: 16, fontSize: 16, color: "#333" },
@@ -339,4 +386,27 @@ const styles = StyleSheet.create({
   linkTextAlt: { color: "#8c6e54", fontWeight: "700" },
   infoBox: { backgroundColor: "#FFF3C4", borderColor: "#FDE68A", borderWidth: 1, padding: 12, borderRadius: 12 },
   infoText: { color: "#7A4F01" },
+  // ─── NEW: Google button styles ───────────────────────────────────────────
+  dividerRow: { flexDirection: "row", alignItems: "center", width: "100%", marginVertical: 16 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: "#e8d9b5" },
+  dividerText: { marginHorizontal: 12, color: "#8c6e54", fontWeight: "600", fontSize: 14 },
+  googleButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "white",
+    borderWidth: 2,
+    borderColor: "#e8d9b5",
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    minWidth: 200,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  googleIcon: { fontSize: 18, fontWeight: "800", color: "#4285F4", marginRight: 10 },
+  googleButtonText: { fontSize: 15, fontWeight: "700", color: "#444", letterSpacing: 0.3 },
 });
