@@ -16,21 +16,23 @@ export default function ProfileScreen() {
   const [joined, setJoined] = useState<string>('—');
 
   useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem('user');
-        if (raw) {
-          const u = JSON.parse(raw);
-          setName(u?.name || u?.email || 'User');
-          setEmail(u?.email || '');
-          setRole(u?.role || 'Rider');
-          setJoined(u?.joinedAt ? new Date(u.joinedAt).toDateString() : '—');
-        }
-      } catch {
-        // ignore parse/storage errors gracefully
+  (async () => {
+    try {
+      // Try auth.user first (set by signInWithToken — works for both Google and manual login)
+      const raw = await AsyncStorage.getItem("auth.user") 
+                  || await AsyncStorage.getItem("user");
+      if (raw) {
+        const u = JSON.parse(raw);
+        setName(u?.name || u?.email || "User");
+        setEmail(u?.email || "");
+        setRole(u?.role || "Rider");
+        setJoined(u?.createdAt ? new Date(u.createdAt).toDateString() : "—");
       }
-    })();
-  }, []);
+    } catch {
+      // ignore
+    }
+  })();
+}, []);
 
   // ⬅️ Back arrow in header → Rider Overview
   useLayoutEffect(() => {

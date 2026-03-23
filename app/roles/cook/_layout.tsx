@@ -33,7 +33,7 @@ function GradientIcon({
 }
 
 // ===== API + helpers for polling request count =====
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://192.168.29.87:1900";
+const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://65.2.184.30";
 const SEEN_COUNT_KEY = "cook_prep_seen_count";
 
 type HeadersDict = Record<string, string>;
