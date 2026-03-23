@@ -27,6 +27,14 @@ export default function AuthLayout() {
           ),
         }}
       />
+      {/* Hidden — only navigated to programmatically */}
+      <Tabs.Screen
+        name="pending"
+        options={{
+          href: null,        // ← removes from tab bar completely
+          // tabBarButton: () => null, // ← extra safety
+        }}
+      />
     </Tabs>
   );
 }

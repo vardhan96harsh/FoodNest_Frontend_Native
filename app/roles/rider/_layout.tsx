@@ -39,20 +39,21 @@ export default function RiderLayout() {
   const [riderEmail, setRiderEmail] = useState<string>("");
 
   useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem("user");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          setRiderName(parsed?.name || parsed?.email || "");
-          setRiderEmail(parsed?.email || "");
-        }
-      } catch {
-        setRiderName("");
-        setRiderEmail("");
+  (async () => {
+    try {
+      const raw = await AsyncStorage.getItem("auth.user")
+                  || await AsyncStorage.getItem("user");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setRiderName(parsed?.name || parsed?.email || "");
+        setRiderEmail(parsed?.email || "");
       }
-    })();
-  }, []);
+    } catch {
+      setRiderName("");
+      setRiderEmail("");
+    }
+  })();
+}, []);
 
   const initials = useMemo(() => {
     const base = (riderName || riderEmail || "User").trim();
@@ -85,10 +86,10 @@ export default function RiderLayout() {
     </View>
   );
 
-  const handleSignOut = () => {
-    signOut();
-    router.replace("/(auth)/login");
-  };
+const handleSignOut = async () => {
+  await signOut();  // ← await it
+  router.replace("/(auth)/login");
+};
 
   return (
     <Drawer

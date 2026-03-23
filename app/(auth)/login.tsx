@@ -13,7 +13,7 @@ import { useRouter } from "expo-router";
 import { signInWithToken } from "@/lib/authStore";
 import { api } from "@/lib/api";
 // import { loginWithGoogle } from "@/lib/googleAuth"; // 👈 NEW
-import googleAuth from "@/lib/googleAuth";
+import { loginWithGoogle } from "@/lib/googleAuth";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -46,7 +46,10 @@ export default function Login() {
   // ─── Existing email/password login (UNCHANGED) ───────────────────────────
   const handleLogin = async () => {
     if (!email || !password) {
-      return Alert.alert(t("alerts.missingInfo.title"), t("alerts.missingInfo.msg"));
+      return Alert.alert(
+        t("alerts.missingInfo.title"),
+        t("alerts.missingInfo.msg")
+      );
     }
 
     setBusy(true);
@@ -56,7 +59,7 @@ export default function Login() {
         password,
       });
 
-      const payload = (res && (res as any).data) ? (res as any).data : res;
+      const payload = res && (res as any).data ? (res as any).data : res;
       const user = payload?.user;
       const jwt = payload?.token || payload?.accessToken;
 
@@ -84,16 +87,14 @@ export default function Login() {
   };
 
   // ─── NEW: Google login handler ────────────────────────────────────────────
-  const handleGoogleLogin = async () => {
+const handleGoogleLogin = async () => {
   setGoogleBusy(true);
   try {
-    const result = await googleAuth.loginWithGoogle(); // ← changed
+    const result = await loginWithGoogle();
     if (result.success) {
-      router.replace("/");
-    } else {
-      if (result.error !== "Login cancelled") {
-        Alert.alert("Google Login Failed", result.error || "Something went wrong");
-      }
+      router.replace("/"); // index.tsx handles routing to pending or dashboard
+    } else if (result.error !== "Login cancelled") {
+      Alert.alert("Google Login Failed", result.error);
     }
   } finally {
     setGoogleBusy(false);
@@ -101,10 +102,16 @@ export default function Login() {
 };
 
   const requestOtp = async () => {
-    if (!email) return Alert.alert(t("alerts.emailRequired.title"), t("alerts.emailRequired.msg"));
+    if (!email)
+      return Alert.alert(
+        t("alerts.emailRequired.title"),
+        t("alerts.emailRequired.msg")
+      );
     setBusy(true);
     try {
-      await api.post("/api/auth/forgot/request-otp", { email: email.trim().toLowerCase() });
+      await api.post("/api/auth/forgot/request-otp", {
+        email: email.trim().toLowerCase(),
+      });
       Alert.alert(t("alerts.otpSent.title"), t("alerts.otpSent.msg"));
       setMode("otp");
     } catch (e: any) {
@@ -116,7 +123,10 @@ export default function Login() {
 
   const verifyOtp = async () => {
     if (!otp || otp.trim().length < 4)
-      return Alert.alert(t("alerts.invalidCode.title"), t("alerts.invalidCode.msg"));
+      return Alert.alert(
+        t("alerts.invalidCode.title"),
+        t("alerts.invalidCode.msg")
+      );
     setBusy(true);
     try {
       await api.post("/api/auth/forgot/verify", {
@@ -125,7 +135,10 @@ export default function Login() {
       });
       setMode("reset");
     } catch (e: any) {
-      Alert.alert(t("alerts.invalidOrExpired.title"), e?.message || t("errors.generic"));
+      Alert.alert(
+        t("alerts.invalidOrExpired.title"),
+        e?.message || t("errors.generic")
+      );
     } finally {
       setBusy(false);
     }
@@ -133,7 +146,10 @@ export default function Login() {
 
   const resetPassword = async () => {
     if (!newPassword || newPassword.length < 6) {
-      return Alert.alert(t("alerts.weakPassword.title"), t("alerts.weakPassword.msg"));
+      return Alert.alert(
+        t("alerts.weakPassword.title"),
+        t("alerts.weakPassword.msg")
+      );
     }
     if (newPassword !== confirmPassword) {
       return Alert.alert(t("alerts.mismatch.title"), t("alerts.mismatch.msg"));
@@ -152,7 +168,10 @@ export default function Login() {
       setConfirmPassword("");
       setMode("login");
     } catch (e: any) {
-      Alert.alert(t("alerts.couldNotReset.title"), e?.message || t("errors.generic"));
+      Alert.alert(
+        t("alerts.couldNotReset.title"),
+        e?.message || t("errors.generic")
+      );
     } finally {
       setBusy(false);
     }
@@ -169,14 +188,26 @@ export default function Login() {
     disabled?: boolean;
     style?: any;
   }) => (
-    <Pressable onPress={onPress} disabled={disabled} style={[styles.loginButtonContainer, style]}>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={[styles.loginButtonContainer, style]}
+    >
       <LinearGradient
-        colors={disabled ? ["#FFE082", "#FFCA28", "#FFB300"] : ["#FFE082", "#FFC107", "#FFA000"]}
+        colors={
+          disabled
+            ? ["#FFE082", "#FFCA28", "#FFB300"]
+            : ["#FFE082", "#FFC107", "#FFA000"]
+        }
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[styles.loginButtonGradient, disabled && { opacity: 0.7 }]}
       >
-        {busy ? <ActivityIndicator color="white" /> : <Text style={styles.loginButtonText}>{children}</Text>}
+        {busy ? (
+          <ActivityIndicator color="white" />
+        ) : (
+          <Text style={styles.loginButtonText}>{children}</Text>
+        )}
       </LinearGradient>
     </Pressable>
   );
@@ -195,7 +226,12 @@ export default function Login() {
       <Animated.View style={[styles.formContainer, { opacity: 1 }]}>
         {/* Email */}
         <View style={styles.inputContainer}>
-          <Feather name="mail" size={20} color="#666" style={styles.inputIcon} />
+          <Feather
+            name="mail"
+            size={20}
+            color="#666"
+            style={styles.inputIcon}
+          />
           <TextInput
             placeholder={t("placeholders.email")}
             autoCapitalize="none"
@@ -211,7 +247,12 @@ export default function Login() {
           <>
             {/* Password */}
             <View style={styles.inputContainer}>
-              <Feather name="lock" size={20} color="#666" style={styles.inputIcon} />
+              <Feather
+                name="lock"
+                size={20}
+                color="#666"
+                style={styles.inputIcon}
+              />
               <TextInput
                 placeholder={t("placeholders.password")}
                 secureTextEntry={!showPassword}
@@ -226,12 +267,20 @@ export default function Login() {
                 style={styles.eyeButton}
                 hitSlop={12}
               >
-                <Feather name={showPassword ? "eye-off" : "eye"} size={20} color="#666" />
+                <Feather
+                  name={showPassword ? "eye-off" : "eye"}
+                  size={20}
+                  color="#666"
+                />
               </Pressable>
             </View>
 
             {/* Forgot link */}
-            <Pressable onPress={() => setMode("forgot")} disabled={busy} style={styles.linkRow}>
+            <Pressable
+              onPress={() => setMode("forgot")}
+              disabled={busy}
+              style={styles.linkRow}
+            >
               <Text style={styles.linkText}>{t("links.forgotPassword")}</Text>
             </Pressable>
           </>
@@ -246,7 +295,12 @@ export default function Login() {
         {mode === "otp" && (
           <>
             <View style={styles.inputContainer}>
-              <Feather name="key" size={20} color="#666" style={styles.inputIcon} />
+              <Feather
+                name="key"
+                size={20}
+                color="#666"
+                style={styles.inputIcon}
+              />
               <TextInput
                 placeholder={t("placeholders.otp")}
                 keyboardType="number-pad"
@@ -257,7 +311,11 @@ export default function Login() {
                 style={styles.textInput}
               />
             </View>
-            <Pressable onPress={() => setMode("forgot")} disabled={busy} style={styles.linkRow}>
+            <Pressable
+              onPress={() => setMode("forgot")}
+              disabled={busy}
+              style={styles.linkRow}
+            >
               <Text style={styles.linkText}>{t("links.resendOtp")}</Text>
             </Pressable>
           </>
@@ -266,7 +324,12 @@ export default function Login() {
         {mode === "reset" && (
           <>
             <View style={styles.inputContainer}>
-              <Feather name="shield" size={20} color="#666" style={styles.inputIcon} />
+              <Feather
+                name="shield"
+                size={20}
+                color="#666"
+                style={styles.inputIcon}
+              />
               <TextInput
                 placeholder={t("placeholders.newPassword")}
                 secureTextEntry
@@ -277,7 +340,12 @@ export default function Login() {
               />
             </View>
             <View style={styles.inputContainer}>
-              <Feather name="shield" size={20} color="#666" style={styles.inputIcon} />
+              <Feather
+                name="shield"
+                size={20}
+                color="#666"
+                style={styles.inputIcon}
+              />
               <TextInput
                 placeholder={t("placeholders.confirmPassword")}
                 secureTextEntry
@@ -310,7 +378,10 @@ export default function Login() {
             <Pressable
               onPress={handleGoogleLogin}
               disabled={busy || googleBusy}
-              style={[styles.googleButton, (busy || googleBusy) && { opacity: 0.6 }]}
+              style={[
+                styles.googleButton,
+                (busy || googleBusy) && { opacity: 0.6 },
+              ]}
             >
               {googleBusy ? (
                 <ActivityIndicator color="#444" />
@@ -318,7 +389,9 @@ export default function Login() {
                 <>
                   {/* Google "G" logo using text — no extra package needed */}
                   <Text style={styles.googleIcon}>G</Text>
-                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                  <Text style={styles.googleButtonText}>
+                    Continue with Google
+                  </Text>
                 </>
               )}
             </Pressable>
@@ -332,7 +405,10 @@ export default function Login() {
         )}
 
         {mode === "otp" && (
-          <YellowButton onPress={verifyOtp} disabled={busy || otp.trim().length < 4}>
+          <YellowButton
+            onPress={verifyOtp}
+            disabled={busy || otp.trim().length < 4}
+          >
             {t("buttons.verifyOtp")}
           </YellowButton>
         )}
@@ -340,7 +416,12 @@ export default function Login() {
         {mode === "reset" && (
           <YellowButton
             onPress={resetPassword}
-            disabled={busy || !newPassword || !confirmPassword || newPassword !== confirmPassword}
+            disabled={
+              busy ||
+              !newPassword ||
+              !confirmPassword ||
+              newPassword !== confirmPassword
+            }
           >
             {t("buttons.setNewPassword")}
           </YellowButton>
@@ -369,27 +450,91 @@ export default function Login() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 48, backgroundColor: "#fffbe9" },
-  brandingContainer: { alignItems: "center", justifyContent: "center", marginTop: 0, marginBottom: 20 },
-  mainTitle: { fontSize: 36, fontWeight: "800", color: "#7A4F01", textAlign: "center", marginBottom: 8, letterSpacing: 1 },
-  slogan: { fontSize: 16, fontWeight: "500", color: "#8c6e54", textAlign: "center", fontStyle: "italic", letterSpacing: 0.5 },
+  brandingContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 0,
+    marginBottom: 20,
+  },
+  mainTitle: {
+    fontSize: 36,
+    fontWeight: "800",
+    color: "#7A4F01",
+    textAlign: "center",
+    marginBottom: 8,
+    letterSpacing: 1,
+  },
+  slogan: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#8c6e54",
+    textAlign: "center",
+    fontStyle: "italic",
+    letterSpacing: 0.5,
+  },
   formContainer: { gap: 16, marginBottom: 4 },
-  inputContainer: { flexDirection: "row", alignItems: "center", borderWidth: 2, borderColor: "#f1e2b6", borderRadius: 16, backgroundColor: "white", paddingHorizontal: 16, paddingVertical: 4 },
+  inputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#f1e2b6",
+    borderRadius: 16,
+    backgroundColor: "white",
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
   inputIcon: { marginRight: 12 },
   textInput: { flex: 1, paddingVertical: 16, fontSize: 16, color: "#333" },
   eyeButton: { paddingLeft: 8, paddingVertical: 8 },
   buttonContainer: { alignItems: "center" },
-  loginButtonContainer: { borderRadius: 16, shadowColor: "#FFA000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 10, elevation: 5, minWidth: 200, overflow: "hidden" },
-  loginButtonGradient: { paddingVertical: 18, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
-  loginButtonText: { color: "white", fontWeight: "700", fontSize: 16, letterSpacing: 0.5, textTransform: "uppercase" },
+  loginButtonContainer: {
+    borderRadius: 16,
+    shadowColor: "#FFA000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 5,
+    minWidth: 200,
+    overflow: "hidden",
+  },
+  loginButtonGradient: {
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loginButtonText: {
+    color: "white",
+    fontWeight: "700",
+    fontSize: 16,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
   linkRow: { alignSelf: "flex-end" },
   linkText: { color: "#8c6e54", fontWeight: "700", paddingVertical: 8 },
   linkTextAlt: { color: "#8c6e54", fontWeight: "700" },
-  infoBox: { backgroundColor: "#FFF3C4", borderColor: "#FDE68A", borderWidth: 1, padding: 12, borderRadius: 12 },
+  infoBox: {
+    backgroundColor: "#FFF3C4",
+    borderColor: "#FDE68A",
+    borderWidth: 1,
+    padding: 12,
+    borderRadius: 12,
+  },
   infoText: { color: "#7A4F01" },
   // ─── NEW: Google button styles ───────────────────────────────────────────
-  dividerRow: { flexDirection: "row", alignItems: "center", width: "100%", marginVertical: 16 },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
+    marginVertical: 16,
+  },
   dividerLine: { flex: 1, height: 1, backgroundColor: "#e8d9b5" },
-  dividerText: { marginHorizontal: 12, color: "#8c6e54", fontWeight: "600", fontSize: 14 },
+  dividerText: {
+    marginHorizontal: 12,
+    color: "#8c6e54",
+    fontWeight: "600",
+    fontSize: 14,
+  },
   googleButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -407,6 +552,16 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  googleIcon: { fontSize: 18, fontWeight: "800", color: "#4285F4", marginRight: 10 },
-  googleButtonText: { fontSize: 15, fontWeight: "700", color: "#444", letterSpacing: 0.3 },
+  googleIcon: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#4285F4",
+    marginRight: 10,
+  },
+  googleButtonText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#444",
+    letterSpacing: 0.3,
+  },
 });

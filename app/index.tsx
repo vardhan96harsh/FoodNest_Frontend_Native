@@ -1,19 +1,24 @@
 import { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
 import { Redirect } from "expo-router";
-import { bootstrapAuth, getUser, onAuthChange } from "@/lib/authStore";
+import { bootstrapAuth, getUser, getPending, onAuthChange } from "@/lib/authStore";
 
 export default function Index() {
-  const [ready, setReady] = useState(false);
-  const [user, setUser] = useState(getUser());
+  const [ready, setReady]     = useState(false);
+  const [user, setUser]       = useState(getUser());
+  const [pending, setPending] = useState(getPending());
 
   useEffect(() => {
     (async () => {
       await bootstrapAuth();
       setUser(getUser());
+      setPending(getPending());
       setReady(true);
     })();
-    return onAuthChange(() => setUser(getUser()));
+    return onAuthChange(() => {
+      setUser(getUser());
+      setPending(getPending());
+    });
   }, []);
 
   if (!ready) {
@@ -23,6 +28,9 @@ export default function Index() {
       </View>
     );
   }
+
+  // ← Show pending screen
+  if (pending && !user) return <Redirect href="/(auth)/pending" />;
 
   if (!user) return <Redirect href="/(auth)/login" />;
 
