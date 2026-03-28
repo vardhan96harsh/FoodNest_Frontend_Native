@@ -1,5 +1,5 @@
 // screens/MyRoute.tsx
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   ScrollView,
   View,
@@ -15,7 +15,8 @@ import {
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuthState, getUser, getToken, debugStorage } from '@/lib/authStore';
+import * as Location from 'expo-location';
 
 /* ---------- Types ---------- */
 type FoodItem = {
@@ -132,6 +133,110 @@ function ProgressBar({ value, color = tone.primary }: { value: number; color?: s
   );
 }
 
+// Accept Assignment Modal
+function AcceptAssignmentModal({ 
+  visible, 
+  onClose, 
+  onAccept, 
+  assignment,
+  loading 
+}: { 
+  visible: boolean;
+  onClose: () => void;
+  onAccept: () => void;
+  assignment: Assignment | null;
+  loading: boolean;
+}) {
+  if (!assignment) return null;
+
+  const totalItems = assignment.inventory?.reduce((sum, item) => sum + (item.quantityAssigned || 0), 0) || 0;
+  const totalStops = assignment.stops?.length || 0;
+
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.acceptModalCard}>
+          <View style={styles.acceptModalHeader}>
+            <View style={styles.acceptIconContainer}>
+              <Feather name="map" size={32} color={tone.primary} />
+            </View>
+            <Text style={styles.acceptModalTitle}>Accept Assignment</Text>
+            <Text style={styles.acceptModalSubtitle}>
+              You have been assigned a new route
+            </Text>
+          </View>
+
+          <View style={styles.acceptModalDetails}>
+            <View style={styles.detailRow}>
+              <Feather name="navigation" size={18} color={tone.gray} />
+              <Text style={styles.detailText}>
+                Route: <Text style={styles.detailValue}>{assignment.route?.name || 'Unknown Route'}</Text>
+              </Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Feather name="truck" size={18} color={tone.gray} />
+              <Text style={styles.detailText}>
+                Vehicle: <Text style={styles.detailValue}>{assignment.vehicle?.registrationNo || 'Not Assigned'}</Text>
+              </Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <MaterialCommunityIcons name="battery" size={18} color={tone.gray} />
+              <Text style={styles.detailText}>
+                Battery: <Text style={styles.detailValue}>{assignment.battery?.charge || 0}%</Text>
+              </Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Feather name="package" size={18} color={tone.gray} />
+              <Text style={styles.detailText}>
+                Items: <Text style={styles.detailValue}>{totalItems} items</Text>
+              </Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Feather name="map-pin" size={18} color={tone.gray} />
+              <Text style={styles.detailText}>
+                Stops: <Text style={styles.detailValue}>{totalStops} locations</Text>
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.acceptModalActions}>
+            <Pressable 
+              style={[styles.acceptBtn, loading && styles.disabledBtn]} 
+              onPress={onAccept}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <Feather name="check-circle" size={18} color="#fff" />
+                  <Text style={styles.acceptBtnText}>Accept Assignment</Text>
+                </>
+              )}
+            </Pressable>
+            
+            <Pressable 
+              style={styles.rejectBtn} 
+              onPress={onClose}
+              disabled={loading}
+            >
+              <Text style={styles.rejectBtnText}>Reject</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.acceptModalNote}>
+            You have 5 minutes to accept this assignment
+          </Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function StopSaleModal({ 
   visible, 
   onClose, 
@@ -149,6 +254,7 @@ function StopSaleModal({
 }) {
   const [sales, setSales] = useState<Array<{ foodItemId: string; quantity: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   React.useEffect(() => {
     if (visible && inventory?.length > 0) {
@@ -156,6 +262,17 @@ function StopSaleModal({
         foodItemId: item.foodItem?._id || '',
         quantity: '0'
       })));
+      
+      (async () => {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({});
+          setLocation({
+            lat: loc.coords.latitude,
+            lng: loc.coords.longitude
+          });
+        }
+      })();
     }
   }, [visible, inventory]);
 
@@ -181,7 +298,6 @@ function StopSaleModal({
       return;
     }
 
-    // Validate quantities
     for (const sale of salesData) {
       const inventoryItem = inventory.find(i => i.foodItem?._id === sale.foodItemId);
       if (inventoryItem && sale.quantity > (inventoryItem.quantityRemaining || 0)) {
@@ -195,13 +311,14 @@ function StopSaleModal({
 
     setLoading(true);
     try {
-      // Record each sale
       for (const sale of salesData) {
         await api.post('/api/rider/sales', {
           assignmentId,
           foodItemId: sale.foodItemId,
           qty: sale.quantity,
-          stopId: stop._id
+          stopId: stop._id,
+          lat: location?.lat,
+          lng: location?.lng
         });
       }
       
@@ -273,6 +390,94 @@ function StopSaleModal({
   );
 }
 
+// Completion Summary Modal - ADD THIS NEW COMPONENT
+function CompletionSummaryModal({ 
+  visible, 
+  onClose, 
+  assignment 
+}: { 
+  visible: boolean;
+  onClose: () => void;
+  assignment: Assignment | null;
+}) {
+  if (!assignment) return null;
+
+  const totalStops = assignment.stops?.length || 0;
+  const completedStops = assignment.stops?.filter(s => s.status === 'completed').length || 0;
+  const totalItemsSold = assignment.inventory?.reduce((sum, i) => sum + (i.quantitySold || 0), 0) || 0;
+  const totalRevenue = assignment.inventory?.reduce(
+    (sum, i) => sum + ((i.quantitySold || 0) * (i.foodItem?.price || 0)), 0
+  ) || 0;
+  
+  const totalDuration = assignment.startTime && assignment.endTime
+    ? Math.round((new Date(assignment.endTime).getTime() - new Date(assignment.startTime).getTime()) / 60000)
+    : 0;
+
+  const averageStopTime = completedStops > 0 
+    ? Math.round(totalDuration / completedStops) 
+    : 0;
+
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.completionModalCard}>
+          <View style={styles.completionHeader}>
+            <View style={styles.successIconContainer}>
+              <Feather name="check-circle" size={48} color={tone.success} />
+            </View>
+            <Text style={styles.completionTitle}>Route Completed! 🎉</Text>
+            <Text style={styles.completionSubtitle}>
+              Great job! You've finished your route
+            </Text>
+          </View>
+
+          <View style={styles.completionStats}>
+            <View style={styles.completionStatItem}>
+              <Text style={styles.completionStatValue}>{completedStops}/{totalStops}</Text>
+              <Text style={styles.completionStatLabel}>Stops Completed</Text>
+            </View>
+            <View style={styles.completionStatItem}>
+              <Text style={styles.completionStatValue}>{totalItemsSold}</Text>
+              <Text style={styles.completionStatLabel}>Items Sold</Text>
+            </View>
+            <View style={styles.completionStatItem}>
+              <Text style={[styles.completionStatValue, { color: tone.success }]}>
+                ₹{totalRevenue.toFixed(2)}
+              </Text>
+              <Text style={styles.completionStatLabel}>Total Revenue</Text>
+            </View>
+          </View>
+
+          <View style={styles.completionDetails}>
+            <View style={styles.completionDetailRow}>
+              <Feather name="clock" size={16} color={tone.gray} />
+              <Text style={styles.completionDetailText}>
+                Total Time: <Text style={styles.completionDetailValue}>{totalDuration} minutes</Text>
+              </Text>
+            </View>
+            <View style={styles.completionDetailRow}>
+              <Feather name="bar-chart-2" size={16} color={tone.gray} />
+              <Text style={styles.completionDetailText}>
+                Avg per Stop: <Text style={styles.completionDetailValue}>{averageStopTime} minutes</Text>
+              </Text>
+            </View>
+            <View style={styles.completionDetailRow}>
+              <Feather name="shopping-bag" size={16} color={tone.gray} />
+              <Text style={styles.completionDetailText}>
+                Items per Stop: <Text style={styles.completionDetailValue}>{(totalItemsSold / Math.max(completedStops, 1)).toFixed(1)}</Text>
+              </Text>
+            </View>
+          </View>
+
+          <Pressable style={styles.completionBtn} onPress={onClose}>
+            <Text style={styles.completionBtnText}>View Summary</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 /* ---------- Main Screen ---------- */
 export default function MyRouteScreen() {
   const [assignment, setAssignment] = useState<Assignment | null>(null);
@@ -282,19 +487,62 @@ export default function MyRouteScreen() {
   const [saleModalVisible, setSaleModalVisible] = useState(false);
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [acceptModalVisible, setAcceptModalVisible] = useState(false);
+  const [acceptLoading, setAcceptLoading] = useState(false);
+  const [completionModalVisible, setCompletionModalVisible] = useState(false);
+  const locationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startLocationTracking = useCallback(async (assignmentId: string) => {
+    if (locationIntervalRef.current) {
+      clearInterval(locationIntervalRef.current);
+    }
+    
+    const interval = setInterval(async () => {
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({});
+          await api.post('/api/rider/location', {
+            assignmentId,
+            lat: loc.coords.latitude,
+            lng: loc.coords.longitude
+          }).catch(err => console.error('Location update error:', err));
+        }
+      } catch (err) {
+        console.error('Location error:', err);
+      }
+    }, 30000);
+    
+    locationIntervalRef.current = interval;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (locationIntervalRef.current) {
+        clearInterval(locationIntervalRef.current);
+      }
+    };
+  }, []);
 
   const fetchAssignment = useCallback(async () => {
     try {
       setError(null);
+      console.log("Fetching assignment for today...");
       const response = await api.get<ApiResponse>('/api/rider/assignments/today');
       
       if (response.ok && response.assignment) {
         setAssignment(response.assignment);
+        console.log("✅ Assignment loaded:", response.assignment.route?.name);
+        
+        if (response.assignment.status === 'pending') {
+          setAcceptModalVisible(true);
+        }
+        
+        if (response.assignment.status === 'active' && response.assignment._id) {
+          startLocationTracking(response.assignment._id);
+        }
       } else {
         setAssignment(null);
-        if (response.message) {
-          console.log('No assignment:', response.message);
-        }
       }
     } catch (err: any) {
       console.error('Failed to fetch assignment:', err);
@@ -304,24 +552,53 @@ export default function MyRouteScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [startLocationTracking]);
 
   useEffect(() => {
     fetchAssignment();
-  }, []);
+  }, [fetchAssignment]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchAssignment();
   }, [fetchAssignment]);
 
+  const handleAcceptAssignment = async () => {
+    if (!assignment?._id) return;
+    
+    setAcceptLoading(true);
+    try {
+      const res = await api.post(`/api/rider/assignments/${assignment._id}/accept`);
+      
+      if (res.ok) {
+        await fetchAssignment();
+        setAcceptModalVisible(false);
+        Alert.alert('Success', 'Assignment accepted! You can now start your route.');
+        
+        if (assignment._id) {
+          startLocationTracking(assignment._id);
+        }
+      } else {
+        Alert.alert('Error', res.message || 'Failed to accept assignment');
+      }
+    } catch (error: any) {
+      console.error('Accept assignment error:', error);
+      Alert.alert('Error', error?.message || 'Failed to accept assignment');
+    } finally {
+      setAcceptLoading(false);
+    }
+  };
+
   const handleArriveAtStop = async (stopId: string) => {
     if (!assignment?._id) return;
     
     try {
       setSaving(true);
+      const currentLocation = await Location.getCurrentPositionAsync({});
       const res = await api.post(`/api/rider/stops/${stopId}/arrive`, {
-        assignmentId: assignment._id
+        assignmentId: assignment._id,
+        lat: currentLocation.coords.latitude,
+        lng: currentLocation.coords.longitude
       });
       
       if (res.ok) {
@@ -348,13 +625,22 @@ export default function MyRouteScreen() {
           onPress: async () => {
             try {
               setSaving(true);
+              const currentLocation = await Location.getCurrentPositionAsync({});
               const res = await api.post(`/api/rider/stops/${stopId}/complete`, {
-                assignmentId: assignment._id
+                assignmentId: assignment._id,
+                lat: currentLocation.coords.latitude,
+                lng: currentLocation.coords.longitude
               });
               
               if (res.ok) {
                 await fetchAssignment();
-                Alert.alert('Success', 'Stop marked as complete');
+                
+                // Check if route was completed
+                if (res.data.routeCompleted) {
+                  setCompletionModalVisible(true);
+                } else {
+                  Alert.alert('Success', 'Stop marked as complete');
+                }
               }
             } catch (error: any) {
               Alert.alert('Error', error?.message || 'Failed to complete stop');
@@ -372,7 +658,7 @@ export default function MyRouteScreen() {
 
     Alert.alert(
       'Start Route',
-      'Are you ready to start your route?',
+      'Are you ready to start your route? Location tracking will begin.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -380,11 +666,16 @@ export default function MyRouteScreen() {
           onPress: async () => {
             try {
               setSaving(true);
-              const res = await api.post(`/api/rider/assignments/${assignment._id}/start`);
+              const currentLocation = await Location.getCurrentPositionAsync({});
+              const res = await api.post(`/api/rider/assignments/${assignment._id}/start`, {
+                lat: currentLocation.coords.latitude,
+                lng: currentLocation.coords.longitude
+              });
               
               if (res.ok) {
                 await fetchAssignment();
                 Alert.alert('Success', 'Route started!');
+                startLocationTracking(assignment._id);
               }
             } catch (error: any) {
               Alert.alert('Error', error?.message || 'Failed to start route');
@@ -397,7 +688,6 @@ export default function MyRouteScreen() {
     );
   };
 
-  // Safe calculations with null checks
   const completedStops = assignment?.stops?.filter(s => s?.status === 'completed')?.length || 0;
   const inProgressStop = assignment?.stops?.find(s => s?.status === 'in-progress');
   const totalStops = assignment?.stops?.length || 0;
@@ -467,285 +757,291 @@ export default function MyRouteScreen() {
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.page}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      {/* Header */}
-      <View>
-        <Text style={styles.h1}>My Route</Text>
-        <Text style={styles.subtle}>
-          {assignment.date ? new Date(assignment.date).toLocaleDateString() : 'Today'} • {assignment.route?.name || 'Unknown Route'}
-        </Text>
-      </View>
+    <>
+      <ScrollView
+        contentContainerStyle={styles.page}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        {/* Header */}
+        <View>
+          <Text style={styles.h1}>My Route</Text>
+          <Text style={styles.subtle}>
+            {assignment.date ? new Date(assignment.date).toLocaleDateString() : 'Today'} • {assignment.route?.name || 'Unknown Route'}
+          </Text>
+        </View>
 
-      {/* Map Image */}
-      <View style={styles.mapWrap}>
-        <Image
-          source={require('../../../assets/map.png')}
-          style={styles.mapImage}
-          resizeMode='cover'
-        />
-      </View>
-
-      {/* Route Card */}
-      <View style={styles.card}>
-        <View style={[styles.rowBetween, { marginBottom: 8 }]}>
-          <View>
-            <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
-              <Feather name='map-pin' size={18} color={tone.primary} />
-              <Text style={styles.sectionTitle}>{assignment.route?.name || 'Route'}</Text>
-            </View>
-            <Text style={styles.subtleSmall}>
-              {assignment.startTime ? formatTime(assignment.startTime) : 'Not started'} • 
-              {inProgressStop ? ` Current: ${inProgressStop.stopName || 'Stop'}` : ` ${completedStops}/${totalStops} stops`}
-            </Text>
-          </View>
-          <Badge
-            text={assignment.status === 'active' ? 'Active' : 'Pending'}
-            color={assignment.status === 'active' ? tone.success : tone.warning}
-            solid
+        {/* Map Image */}
+        <View style={styles.mapWrap}>
+          <Image
+            source={require('../../../assets/map.png')}
+            style={styles.mapImage}
+            resizeMode='cover'
           />
         </View>
 
-        <View>
-          <View style={[styles.rowBetween, { marginBottom: 6 }]}>
-            <Text style={styles.subtleSmall}>Route Progress</Text>
-            <Text style={styles.subtleSmall}>
-              {completedStops}/{totalStops} stops • {totalAssigned > 0 ? Math.round((totalSold/totalAssigned)*100) : 0}% sold
-            </Text>
+        {/* Route Card */}
+        <View style={styles.card}>
+          <View style={[styles.rowBetween, { marginBottom: 8 }]}>
+            <View>
+              <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                <Feather name='map-pin' size={18} color={tone.primary} />
+                <Text style={styles.sectionTitle}>{assignment.route?.name || 'Route'}</Text>
+              </View>
+              <Text style={styles.subtleSmall}>
+                {assignment.startTime ? formatTime(assignment.startTime) : 'Not started'} • 
+                {inProgressStop ? ` Current: ${inProgressStop.stopName || 'Stop'}` : ` ${completedStops}/${totalStops} stops`}
+              </Text>
+            </View>
+            <Badge
+              text={assignment.status === 'active' ? 'Active' : 'Pending'}
+              color={assignment.status === 'active' ? tone.success : tone.warning}
+              solid
+            />
           </View>
-          <ProgressBar value={progressPct} />
+
+          <View>
+            <View style={[styles.rowBetween, { marginBottom: 6 }]}>
+              <Text style={styles.subtleSmall}>Route Progress</Text>
+              <Text style={styles.subtleSmall}>
+                {completedStops}/{totalStops} stops • {totalAssigned > 0 ? Math.round((totalSold/totalAssigned)*100) : 0}% sold
+              </Text>
+            </View>
+            <ProgressBar value={progressPct} />
+          </View>
+
+          {(assignment.vehicle || assignment.battery) && (
+            <View style={styles.vehicleInfo}>
+              {assignment.vehicle && (
+                <View style={styles.infoChip}>
+                  <Feather name="truck" size={14} color={tone.gray} />
+                  <Text style={styles.infoText}>{assignment.vehicle.registrationNo || 'No vehicle'}</Text>
+                </View>
+              )}
+              {assignment.battery && (
+                <View style={styles.infoChip}>
+                  <MaterialCommunityIcons name="battery" size={14} color={tone.gray} />
+                  <Text style={styles.infoText}>{assignment.battery.charge || 0}%</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {assignment.status === 'active' && !assignment.startTime && (
+            <Pressable 
+              style={[styles.primaryBtn, { marginTop: 12 }]} 
+              onPress={handleStartAssignment}
+              disabled={saving}
+            >
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Start Route</Text>}
+            </Pressable>
+          )}
         </View>
 
-        {/* Vehicle/Battery Info */}
-        {(assignment.vehicle || assignment.battery) && (
-          <View style={styles.vehicleInfo}>
-            {assignment.vehicle && (
-              <View style={styles.infoChip}>
-                <Feather name="truck" size={14} color={tone.gray} />
-                <Text style={styles.infoText}>{assignment.vehicle.registrationNo || 'No vehicle'}</Text>
+        {/* Inventory Summary Card */}
+        {assignment.inventory && assignment.inventory.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>My Inventory</Text>
+            <Text style={styles.subtle}>Items assigned to you</Text>
+
+            <View style={styles.inventoryStats}>
+              <View style={styles.statItem}>
+                <Text style={styles.statBig}>{totalAssigned}</Text>
+                <Text style={styles.statLabel}>Assigned</Text>
               </View>
-            )}
-            {assignment.battery && (
-              <View style={styles.infoChip}>
-                <MaterialCommunityIcons name="battery" size={14} color={tone.gray} />
-                <Text style={styles.infoText}>{assignment.battery.charge || 0}%</Text>
+              <View style={styles.statItem}>
+                <Text style={[styles.statBig, { color: tone.success }]}>{totalSold}</Text>
+                <Text style={styles.statLabel}>Sold</Text>
               </View>
-            )}
+              <View style={styles.statItem}>
+                <Text style={[styles.statBig, { color: tone.warning }]}>{totalRemaining}</Text>
+                <Text style={styles.statLabel}>Remaining</Text>
+              </View>
+            </View>
+
+            <View style={styles.listWrap}>
+              {assignment.inventory.map((item, idx) => {
+                const soldPercent = item.quantityAssigned > 0 
+                  ? (item.quantitySold / item.quantityAssigned) * 100 
+                  : 0;
+                return (
+                  <View key={item.foodItem?._id || idx}>
+                    <View style={styles.listRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.listLeft}>{item.foodItem?.name || 'Unknown'}</Text>
+                        <Text style={styles.subtleSmall}>Price: ₹{item.foodItem?.price || 0}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.rightTop}>Sold: {item.quantitySold || 0}</Text>
+                        <Text style={styles.subtleSmall}>Left: {item.quantityRemaining || 0}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.progressContainer}>
+                      <ProgressBar value={soldPercent} color={tone.success} />
+                      <Text style={styles.progressText}>{Math.round(soldPercent)}% sold</Text>
+                    </View>
+                    {idx < assignment.inventory.length - 1 && <View style={styles.divider} />}
+                  </View>
+                );
+              })}
+            </View>
           </View>
         )}
 
-        {/* Start Button */}
-        {!assignment.startTime && assignment.status === 'pending' && (
-          <Pressable 
-            style={[styles.primaryBtn, { marginTop: 12 }]} 
-            onPress={handleStartAssignment}
-            disabled={saving}
-          >
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Start Route</Text>}
-          </Pressable>
-        )}
-      </View>
+        {/* Route Stops */}
+        <View style={{ gap: 12 }}>
+          <Text style={styles.sectionTitle}>Route Stops</Text>
+          {assignment.stops && assignment.stops.length > 0 ? (
+            assignment.stops.map((stop, index) => {
+              const isCompleted = stop?.status === 'completed';
+              const isInProgress = stop?.status === 'in-progress';
+              const isPending = stop?.status === 'pending';
 
-      {/* Inventory Summary Card */}
-      {assignment.inventory && assignment.inventory.length > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>My Inventory</Text>
-          <Text style={styles.subtle}>Items assigned to you</Text>
-
-          <View style={styles.inventoryStats}>
-            <View style={styles.statItem}>
-              <Text style={styles.statBig}>{totalAssigned}</Text>
-              <Text style={styles.statLabel}>Assigned</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statBig, { color: tone.success }]}>{totalSold}</Text>
-              <Text style={styles.statLabel}>Sold</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statBig, { color: tone.warning }]}>{totalRemaining}</Text>
-              <Text style={styles.statLabel}>Remaining</Text>
-            </View>
-          </View>
-
-          <View style={styles.listWrap}>
-            {assignment.inventory.map((item, idx) => {
-              const soldPercent = item.quantityAssigned > 0 
-                ? (item.quantitySold / item.quantityAssigned) * 100 
-                : 0;
               return (
-                <View key={item.foodItem?._id || idx}>
-                  <View style={styles.listRow}>
+                <View
+                  key={stop?._id || index}
+                  style={[
+                    styles.card,
+                    isInProgress && styles.currentStopCard,
+                  ]}
+                >
+                  <View style={[styles.rowBetween, { marginBottom: 8 }]}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.listLeft}>{item.foodItem?.name || 'Unknown'}</Text>
-                      <Text style={styles.subtleSmall}>Price: ₹{item.foodItem?.price || 0}</Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.rightTop}>Sold: {item.quantitySold || 0}</Text>
-                      <Text style={styles.subtleSmall}>Left: {item.quantityRemaining || 0}</Text>
+                      <View style={[styles.row, { alignItems: 'center', gap: 8, flexWrap: 'wrap' }]}>
+                        <Text style={styles.stopName}>
+                          {`${index + 1}. ${stop?.stopName || 'Unknown Stop'}`}
+                        </Text>
+                        {isInProgress && <Badge text="Current" color={tone.primary} solid />}
+                        {isCompleted && <Badge text="Completed" color={tone.success} solid />}
+                        {isPending && !isInProgress && <Badge text="Upcoming" color={tone.gray} solid={false} />}
+                      </View>
+                      {stop?.address ? <Text style={styles.subtleSmall}>{stop.address}</Text> : null}
                     </View>
                   </View>
-                  <View style={styles.progressContainer}>
-                    <ProgressBar value={soldPercent} color={tone.success} />
-                    <Text style={styles.progressText}>{Math.round(soldPercent)}% sold</Text>
-                  </View>
-                  {idx < assignment.inventory.length - 1 && <View style={styles.divider} />}
+
+                  {stop?.arrivedAt && (
+                    <View style={styles.stopTime}>
+                      <Feather name="clock" size={14} color={tone.gray} />
+                      <Text style={styles.subtleSmall}> Arrived: {formatTime(stop.arrivedAt)}</Text>
+                    </View>
+                  )}
+
+                  {stop?.completedAt && (
+                    <View style={styles.stopTime}>
+                      <Feather name="check-circle" size={14} color={tone.success} />
+                      <Text style={styles.subtleSmall}> Completed: {formatTime(stop.completedAt)}</Text>
+                      {stop.durationMinutes ? (
+                        <Text style={styles.subtleSmall}> • {stop.durationMinutes} min</Text>
+                      ) : null}
+                    </View>
+                  )}
+
+                  {stop?.sales && stop.sales.totalItems > 0 && (
+                    <View style={styles.stopSales}>
+                      <Text style={styles.subtleSmall}>Sales at this stop:</Text>
+                      <View style={styles.stopSalesGrid}>
+                        <View style={styles.stopSalesItem}>
+                          <Text style={styles.statValue}>{stop.sales.totalItems} items</Text>
+                        </View>
+                        <View style={styles.stopSalesItem}>
+                          <Text style={[styles.statValue, { color: tone.success }]}>
+                            ₹{stop.sales.totalRevenue?.toFixed(2) || '0.00'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
+                  {isInProgress && (
+                    <View style={styles.stopActions}>
+                      <Pressable
+                        style={[styles.primaryBtn, { flex: 1 }]}
+                        onPress={() => {
+                          setSelectedStop(stop);
+                          setSaleModalVisible(true);
+                        }}
+                      >
+                        <Feather name="shopping-bag" size={16} color="#fff" />
+                        <Text style={styles.primaryBtnText}>Record Sales</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.successBtn, { flex: 1 }]}
+                        onPress={() => handleCompleteStop(stop._id)}
+                      >
+                        <Feather name="check-circle" size={16} color="#fff" />
+                        <Text style={styles.primaryBtnText}>Complete Stop</Text>
+                      </Pressable>
+                    </View>
+                  )}
+
+                  {isPending && index === completedStops && !inProgressStop && assignment.status === 'active' && (
+                    <Pressable
+                      style={[styles.primaryBtn, { marginTop: 12 }]}
+                      onPress={() => handleArriveAtStop(stop._id)}
+                    >
+                      <Feather name="navigation" size={16} color="#fff" />
+                      <Text style={styles.primaryBtnText}>Arrive at Stop</Text>
+                    </Pressable>
+                  )}
                 </View>
               );
-            })}
+            })
+          ) : (
+            <View style={styles.card}>
+              <Text style={styles.subtle}>No stops available for this route</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Route Summary */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Route Summary</Text>
+          <Text style={styles.subtle}>Today's performance overview</Text>
+
+          <View style={styles.summaryGrid}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Stops Completed</Text>
+              <Text style={styles.summaryValue}>{completedStops}/{totalStops}</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Total Sales</Text>
+              <Text style={styles.summaryValue}>{totalSold} items</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Total Revenue</Text>
+              <Text style={[styles.summaryValue, { color: tone.success }]}>
+                ₹{totalRevenue.toFixed(2)}
+              </Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Avg per Stop</Text>
+              <Text style={styles.summaryValue}>
+                ₹{(totalRevenue / Math.max(completedStops, 1)).toFixed(2)}
+              </Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Completion Rate</Text>
+              <Text style={styles.summaryValue}>
+                {totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0}%
+              </Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Sales Rate</Text>
+              <Text style={styles.summaryValue}>
+                {totalAssigned > 0 ? Math.round((totalSold / totalAssigned) * 100) : 0}%
+              </Text>
+            </View>
           </View>
         </View>
-      )}
+      </ScrollView>
 
-      {/* Route Stops */}
-      <View style={{ gap: 12 }}>
-        <Text style={styles.sectionTitle}>Route Stops</Text>
-        {assignment.stops && assignment.stops.length > 0 ? (
-          assignment.stops.map((stop, index) => {
-            const isCompleted = stop?.status === 'completed';
-            const isInProgress = stop?.status === 'in-progress';
-            const isPending = stop?.status === 'pending';
+      <AcceptAssignmentModal
+        visible={acceptModalVisible}
+        onClose={() => setAcceptModalVisible(false)}
+        onAccept={handleAcceptAssignment}
+        assignment={assignment}
+        loading={acceptLoading}
+      />
 
-            return (
-              <View
-                key={stop?._id || index}
-                style={[
-                  styles.card,
-                  isInProgress && styles.currentStopCard,
-                ]}
-              >
-                <View style={[styles.rowBetween, { marginBottom: 8 }]}>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <View style={[styles.row, { alignItems: 'center', gap: 8, flexWrap: 'wrap' }]}>
-                      <Text style={styles.stopName}>
-                        {index + 1}. {stop?.stopName || 'Unknown Stop'}
-                      </Text>
-                      {isInProgress && <Badge text="Current" color={tone.primary} solid />}
-                      {isCompleted && <Badge text="Completed" color={tone.success} solid />}
-                      {isPending && !isInProgress && <Badge text="Upcoming" color={tone.gray} solid={false} />}
-                    </View>
-                    {stop?.address && <Text style={styles.subtleSmall}>{stop.address}</Text>}
-                  </View>
-                </View>
-
-                {stop?.arrivedAt && (
-                  <View style={styles.stopTime}>
-                    <Feather name="clock" size={14} color={tone.gray} />
-                    <Text style={styles.subtleSmall}> Arrived: {formatTime(stop.arrivedAt)}</Text>
-                  </View>
-                )}
-
-                {stop?.completedAt && (
-                  <View style={styles.stopTime}>
-                    <Feather name="check-circle" size={14} color={tone.success} />
-                    <Text style={styles.subtleSmall}> Completed: {formatTime(stop.completedAt)}</Text>
-                    {stop.durationMinutes ? (
-                      <Text style={styles.subtleSmall}> • {stop.durationMinutes} min</Text>
-                    ) : null}
-                  </View>
-                )}
-
-                {stop?.sales && stop.sales.totalItems > 0 && (
-                  <View style={styles.stopSales}>
-                    <Text style={styles.subtleSmall}>Sales at this stop:</Text>
-                    <View style={styles.stopSalesGrid}>
-                      <View style={styles.stopSalesItem}>
-                        <Text style={styles.statValue}>{stop.sales.totalItems} items</Text>
-                      </View>
-                      <View style={styles.stopSalesItem}>
-                        <Text style={[styles.statValue, { color: tone.success }]}>
-                          ₹{stop.sales.totalRevenue?.toFixed(2) || '0.00'}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-
-                {/* Action buttons */}
-                {isInProgress && (
-                  <View style={styles.stopActions}>
-                    <Pressable
-                      style={[styles.primaryBtn, { flex: 1 }]}
-                      onPress={() => {
-                        setSelectedStop(stop);
-                        setSaleModalVisible(true);
-                      }}
-                    >
-                      <Feather name="shopping-bag" size={16} color="#fff" />
-                      <Text style={styles.primaryBtnText}>Record Sales</Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.successBtn, { flex: 1 }]}
-                      onPress={() => handleCompleteStop(stop._id)}
-                    >
-                      <Feather name="check-circle" size={16} color="#fff" />
-                      <Text style={styles.primaryBtnText}>Complete Stop</Text>
-                    </Pressable>
-                  </View>
-                )}
-
-                {isPending && index === completedStops && !inProgressStop && (
-                  <Pressable
-                    style={[styles.primaryBtn, { marginTop: 12 }]}
-                    onPress={() => handleArriveAtStop(stop._id)}
-                  >
-                    <Feather name="navigation" size={16} color="#fff" />
-                    <Text style={styles.primaryBtnText}>Arrive at Stop</Text>
-                  </Pressable>
-                )}
-              </View>
-            );
-          })
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.subtle}>No stops available for this route</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Route Summary */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Route Summary</Text>
-        <Text style={styles.subtle}>Today's performance overview</Text>
-
-        <View style={styles.summaryGrid}>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Stops Completed</Text>
-            <Text style={styles.summaryValue}>{completedStops}/{totalStops}</Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Total Sales</Text>
-            <Text style={styles.summaryValue}>{totalSold} items</Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Total Revenue</Text>
-            <Text style={[styles.summaryValue, { color: tone.success }]}>
-              ₹{totalRevenue.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Avg per Stop</Text>
-            <Text style={styles.summaryValue}>
-              ₹{(totalRevenue / Math.max(completedStops, 1)).toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Completion Rate</Text>
-            <Text style={styles.summaryValue}>
-              {totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0}%
-            </Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Sales Rate</Text>
-            <Text style={styles.summaryValue}>
-              {totalAssigned > 0 ? Math.round((totalSold / totalAssigned) * 100) : 0}%
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Record Sales Modal */}
       <StopSaleModal
         visible={saleModalVisible}
         onClose={() => {
@@ -757,11 +1053,19 @@ export default function MyRouteScreen() {
         assignmentId={assignment._id}
         onSaleRecorded={fetchAssignment}
       />
-    </ScrollView>
+
+      <CompletionSummaryModal
+        visible={completionModalVisible}
+        onClose={() => {
+          setCompletionModalVisible(false);
+          fetchAssignment();
+        }}
+        assignment={assignment}
+      />
+    </>
   );
 }
 
-/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
   page: { padding: 16, gap: 16, paddingBottom: 32, backgroundColor: '#f9fafb', minHeight: '100%' },
   h1: { fontSize: 22, fontWeight: '800', color: '#111827' },
@@ -965,5 +1269,197 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     textAlign: 'center',
     fontWeight: '700',
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  acceptModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '85%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  acceptModalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  acceptIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#e6f0ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  acceptModalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  acceptModalSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  acceptModalDetails: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+  },
+  detailText: {
+    fontSize: 14,
+    color: '#6b7280',
+    flex: 1,
+  },
+  detailValue: {
+    color: '#111827',
+    fontWeight: '600',
+  },
+  acceptModalActions: {
+    gap: 10,
+    marginBottom: 12,
+  },
+  acceptBtn: {
+    backgroundColor: tone.success,
+    paddingVertical: 14,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  acceptBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  rejectBtn: {
+    backgroundColor: '#fff',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+  },
+  rejectBtnText: {
+    color: '#dc2626',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  acceptModalNote: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 8,
+  },
+  disabledBtn: {
+    opacity: 0.7,
+  },
+
+  // Completion Modal Styles - ADD THESE
+  completionModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+    alignItems: 'center',
+  },
+  completionHeader: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  successIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#e8f5e9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  completionTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 8,
+  },
+  completionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  completionStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 24,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  completionStatItem: {
+    alignItems: 'center',
+  },
+  completionStatValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  completionStatLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  completionDetails: {
+    width: '100%',
+    marginBottom: 24,
+    gap: 12,
+  },
+  completionDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  completionDetailText: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  completionDetailValue: {
+    color: '#111827',
+    fontWeight: '600',
+  },
+  completionBtn: {
+    backgroundColor: tone.success,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  completionBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
   },
 });

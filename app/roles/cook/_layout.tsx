@@ -10,7 +10,6 @@ import { Pressable } from "react-native";
 import { useMemo } from "react";
 import { Link } from "expo-router"; // optional
 
-
 // Small gradient icon wrapper (yellow food theme) — same vibe as SuperAdmin
 function GradientIcon({
   name,
@@ -25,15 +24,19 @@ function GradientIcon({
       colors={["#FFE082", "#FFC107", "#FFA000"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={[styles.gradCircle, { width: box, height: box, borderRadius: box / 2 }]}
+      style={[
+        styles.gradCircle,
+        { width: box, height: box, borderRadius: box / 2 },
+      ]}
     >
       <Feather name={name} size={size} color="#fff" />
     </LinearGradient>
   );
 }
 
-// ===== API + helpers for polling request count =====
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://65.2.184.30";
+// ===== API + helpers for polling request count http://65.2.184.30 =====
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://l10.140.244.50:1900";
 const SEEN_COUNT_KEY = "cook_prep_seen_count";
 
 type HeadersDict = Record<string, string>;
@@ -66,10 +69,11 @@ async function fetchActivePrepCount(): Promise<number> {
   const cookId = await getCookId();
   if (!cookId) return 0;
   // You can refine the filter on backend; here we fetch for the cook and count all not 'picked'
-  const rows = await apiGet<any[]>(`/api/prep-requests?cookId=${encodeURIComponent(cookId)}`);
-  return rows.filter(r => r.status !== "picked").length;
+  const rows = await apiGet<any[]>(
+    `/api/prep-requests?cookId=${encodeURIComponent(cookId)}`
+  );
+  return rows.filter((r) => r.status !== "picked").length;
 }
-
 
 export default function CookLayout() {
   const router = useRouter();
@@ -116,8 +120,6 @@ export default function CookLayout() {
     })();
   }, []);
 
-
-
   const initials = useMemo(() => {
     const base = (cookName || cookEmail || "User").trim();
     const parts = base.split(/\s+/);
@@ -125,7 +127,7 @@ export default function CookLayout() {
     const second = parts[1]?.[0] || "";
     return (first + second).toUpperCase();
   }, [cookName, cookEmail]);
-  
+
   const HeaderTitle = () => (
     <View style={{ flexDirection: "row", alignItems: "center" }}>
       <Pressable
@@ -149,13 +151,12 @@ export default function CookLayout() {
           <Text style={{ color: "#fff", fontWeight: "700" }}>{initials}</Text>
         </LinearGradient>
       </Pressable>
-  
+
       <Text style={{ fontSize: 17, fontWeight: "700", color: "#1f2937" }}>
         {cookName ? `Welcome ${cookName}` : "Welcome Cook"}
       </Text>
     </View>
   );
-
 
   // Keep your original auth guard & role check (cook only)
   useEffect(() => {
@@ -170,19 +171,16 @@ export default function CookLayout() {
   }, [router]);
 
   // load baseline seen count once
-useEffect(() => {
-  loadSeen();
-}, [loadSeen]);
+  useEffect(() => {
+    loadSeen();
+  }, [loadSeen]);
 
-// poll server for current active requests
-useEffect(() => {
-  pollCount();
-  const t = setInterval(pollCount, 10000); // every 10s
-  return () => clearInterval(t);
-}, [pollCount]);
-
-
-
+  // poll server for current active requests
+  useEffect(() => {
+    pollCount();
+    const t = setInterval(pollCount, 10000); // every 10s
+    return () => clearInterval(t);
+  }, [pollCount]);
 
   const handleSignOut = () => {
     signOut();
@@ -191,29 +189,33 @@ useEffect(() => {
 
   return (
     <Drawer
-    screenOptions={{
-      headerTitle: () => <HeaderTitle />, // << use custom header
-      headerTitleAlign: "left",
-      drawerActiveTintColor: "#7A4F01",
-      drawerActiveBackgroundColor: "rgba(255,193,7,0.12)",
-    }}
-  >
-    {/* NEW: Profile in drawer, place wherever you like */}
-    <Drawer.Screen
-      name="profile"
-      options={{
-        title: "Profile",
-        drawerIcon: ({ size }) => <GradientIcon name="user" size={size ?? 24} />,
+      screenOptions={{
+        headerTitle: () => <HeaderTitle />, // << use custom header
+        headerTitleAlign: "left",
+        drawerActiveTintColor: "#7A4F01",
+        drawerActiveBackgroundColor: "rgba(255,193,7,0.12)",
       }}
-    />
+    >
+      {/* NEW: Profile in drawer, place wherever you like */}
+      <Drawer.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="user" size={size ?? 24} />
+          ),
+        }}
+      />
 
-    <Drawer.Screen
-      name="CookOverview"
-      options={{
-        title: "Cook Overview",
-        drawerIcon: ({ size }) => <GradientIcon name="home" size={size ?? 24} />,
-      }}
-    />
+      <Drawer.Screen
+        name="CookOverview"
+        options={{
+          title: "Cook Overview",
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="home" size={size ?? 24} />
+          ),
+        }}
+      />
       <Drawer.Screen
         name="MyMenu"
         options={{
@@ -224,7 +226,6 @@ useEffect(() => {
               {hasNew ? <View style={styles.countBadge} /> : null}
             </View>
           ),
-          
         }}
         listeners={{
           focus: () => {
@@ -237,35 +238,55 @@ useEffect(() => {
         name="FoodPrepStatus"
         options={{
           title: "Food Prep Status",
-          drawerIcon: ({ size }) => <GradientIcon name="clock" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="clock" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="RawMaterialRequests"
         options={{
           title: "Raw Material Requests",
-          drawerIcon: ({ size }) => <GradientIcon name="shopping-cart" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="shopping-cart" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="RiderRequests"
         options={{
           title: "Rider Requests",
-          drawerIcon: ({ size }) => <GradientIcon name="truck" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="truck" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="Specials"
         options={{
           title: "Specials",
-          drawerIcon: ({ size }) => <GradientIcon name="star" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="star" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="KitchenHelpers"
         options={{
           title: "Kitchen Helpers",
-          drawerIcon: ({ size }) => <GradientIcon name="users" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="users" size={size ?? 24} />
+          ),
+        }}
+      />
+
+      <Drawer.Screen
+        name="PrepTasks"
+        options={{
+          title: "Prep Tasks",
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="users" size={size ?? 24} />
+          ),
         }}
       />
 
@@ -275,7 +296,9 @@ useEffect(() => {
         options={{
           title: "Sign Out",
           drawerItemStyle: { marginTop: "auto" },
-          drawerIcon: ({ size }) => <GradientIcon name="log-out" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="log-out" size={size ?? 24} />
+          ),
         }}
         listeners={{
           focus: () => {

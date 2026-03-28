@@ -4,12 +4,7 @@ import { signOut } from "@/lib/authStore";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  StyleSheet,
-  View,
-  Text,
-  Pressable,
-} from "react-native";
+import { StyleSheet, View, Text, Pressable } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 function GradientIcon({
@@ -25,7 +20,10 @@ function GradientIcon({
       colors={["#FFE082", "#FFC107", "#FFA000"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={[styles.gradCircle, { width: box, height: box, borderRadius: box / 2 }]}
+      style={[
+        styles.gradCircle,
+        { width: box, height: box, borderRadius: box / 2 },
+      ]}
     >
       <Feather name={name} size={size} color="#fff" />
     </LinearGradient>
@@ -99,12 +97,14 @@ export default function SupervisorLayout() {
         drawerActiveBackgroundColor: "rgba(255,193,7,0.12)",
       }}
     >
-      {/* NEW: Profile entry in drawer */}
+      {/* Profile entry in drawer */}
       <Drawer.Screen
         name="profile"
         options={{
           title: "Profile",
-          drawerIcon: ({ size }) => <GradientIcon name="user" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="user" size={size ?? 24} />
+          ),
         }}
       />
 
@@ -113,75 +113,126 @@ export default function SupervisorLayout() {
         name="SupervisorOverview"
         options={{
           title: "Supervisor Overview",
-          drawerIcon: ({ size }) => <GradientIcon name="home" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="home" size={size ?? 24} />
+          ),
         }}
       />
+
+      {/* NEW: Prep Tasks - Add this section */}
+      <Drawer.Screen
+        name="prep-tasks"
+        options={{
+          title: "Prep Tasks",
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="clipboard" size={size ?? 24} />
+          ),
+        }}
+      />
+
       <Drawer.Screen
         name="food-items"
         options={{
           title: "Food Items",
-          drawerIcon: ({ size }) => <GradientIcon name="coffee" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="coffee" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="RiderLogs"
         options={{
           title: "Rider Logs",
-          drawerIcon: ({ size }) => <GradientIcon name="file-text" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="file-text" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="AssignRider"
         options={{
           title: "Assign Rider",
-          drawerIcon: ({ size }) => <GradientIcon name="user-plus" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="user-plus" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="ViewInventory"
         options={{
           title: "View Inventory",
-          drawerIcon: ({ size }) => <GradientIcon name="eye" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="eye" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="ViewRoutes"
         options={{
           title: "View Routes",
-          drawerIcon: ({ size }) => <GradientIcon name="map" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="map" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="RawMaterialInventory"
         options={{
           title: "Raw Material Inventory",
-          drawerIcon: ({ size }) => <GradientIcon name="package" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="package" size={size ?? 24} />
+          ),
         }}
       />
       <Drawer.Screen
         name="vehicles-management"
         options={{
           title: "Vehicles Management",
-          drawerIcon: ({ size }) => <GradientIcon name="truck" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="truck" size={size ?? 24} />
+          ),
         }}
       />
-
 
       <Drawer.Screen
         name="Request-management"
         options={{
           title: "Requests Management",
-          drawerIcon: ({ size }) => <GradientIcon name="bell" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="bell" size={size ?? 24} />
+          ),
         }}
       />
 
-      {/* Sign Out (you can remove this if Profile has Sign Out) */}
+      <Drawer.Screen
+        name="RefillRequests"
+        options={{
+          title: "Refill Requests",
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="bell" size={size ?? 24} />
+          ),
+        }}
+      />
+
+      <Drawer.Screen
+        name="PrepTasks"
+        options={{
+          title: "Prep Tasks",
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="bell" size={size ?? 24} />
+          ),
+        }}
+      />
+
+      {/* Sign Out */}
       <Drawer.Screen
         name="signout"
         options={{
           title: "Sign Out",
           drawerItemStyle: { marginTop: "auto" },
-          drawerIcon: ({ size }) => <GradientIcon name="log-out" size={size ?? 24} />,
+          drawerIcon: ({ size }) => (
+            <GradientIcon name="log-out" size={size ?? 24} />
+          ),
         }}
         listeners={{
           focus: handleSignOut,

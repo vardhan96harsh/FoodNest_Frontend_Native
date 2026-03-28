@@ -19,20 +19,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL as API_URL } from "@/constants/env";
 
 // ==================== Types ====================
-type StockStatus = "critical" | "low" | "adequate";
+type StockStatus = "out_of_stock" | "available";
 
 interface RawMaterial {
   _id: string;
   name: string;
   category: string;
   currentStock: number;
-  minimumStock: number;
-  maximumStock: number;
   unit: string;
   preferredSupplier: string;
   averageCost: number;
   stockStatus: StockStatus;
-  reorderQuantity: number;
 }
 
 interface FoodItemMaterial {
@@ -54,8 +51,10 @@ async function apiRequest<T>(
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
+
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   const json = await response.json();
+
   if (!response.ok) {
     if (response.status === 403) {
       throw new Error(
@@ -64,21 +63,17 @@ async function apiRequest<T>(
     }
     throw new Error(json.error || "Request failed");
   }
+
   return json;
 }
 
 // ==================== Helpers ====================
-const getStockPercentage = (current: number, max: number) =>
-  max > 0 ? (current / max) * 100 : 0;
-
 const getStatusColors = (status: StockStatus) => {
   switch (status) {
-    case "critical":
+    case "out_of_stock":
       return { bg: "#fee2e2", fg: "#991b1b" };
-    case "low":
-      return { bg: "#fef3c7", fg: "#92400e" };
     default:
-      return { bg: "#e5e7eb", fg: "#374151" };
+      return { bg: "#dcfce7", fg: "#166534" };
   }
 };
 
@@ -119,29 +114,30 @@ export default function RawMaterialInventory() {
   const [editingMaterial, setEditingMaterial] = useState<RawMaterial | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Stock adjustment modal (optional, kept for direct adjustment)
+  // Stock add modal
   const [stockModalVisible, setStockModalVisible] = useState(false);
-  const [selectedMaterialForStock, setSelectedMaterialForStock] = useState<RawMaterial | null>(null);
-  const [newStockValue, setNewStockValue] = useState("");
+  const [selectedMaterialForStock, setSelectedMaterialForStock] =
+    useState<RawMaterial | null>(null);
+  const [addStockValue, setAddStockValue] = useState("");
   const [stockReason, setStockReason] = useState("");
 
   // Form state for adding from food item
   const [quickAddForm, setQuickAddForm] = useState({
     name: "",
     unit: "",
-    currentStock: "0",
-    category: "Other",
+    qty: "",
   });
 
-  // Form state for editing (now includes currentStock)
+  // Form state for editing
   const [editForm, setEditForm] = useState({
     name: "",
     category: "",
     unit: "",
     preferredSupplier: "",
     averageCost: "0",
-    currentStock: "0", // <-- added
+    addQty: "",
   });
+
   const [showUnitDropdown, setShowUnitDropdown] = useState(false);
 
   // Fetch existing raw materials
@@ -181,13 +177,12 @@ export default function RawMaterialInventory() {
     fetchFoodItemMaterials();
   }, []);
 
-  // ----- Quick Add from Food Item (with duplicate check) -----
+  // ----- Quick Add from Food Item -----
   const resetQuickAdd = () => {
     setQuickAddForm({
       name: "",
       unit: "",
-      currentStock: "0",
-      category: "Other",
+      qty: "",
     });
   };
 
@@ -195,54 +190,30 @@ export default function RawMaterialInventory() {
     setQuickAddForm({
       name: material.name,
       unit: material.unit,
-      currentStock: "0",
-      category: "Other",
+      qty: "",
     });
     setAddModalVisible(true);
   };
 
   const handleQuickCreate = async () => {
-    const newStock = parseFloat(quickAddForm.currentStock) || 0;
-    if (newStock <= 0) {
-      Alert.alert("Invalid quantity", "Please enter a valid stock quantity.");
+    const qty = parseFloat(quickAddForm.qty) || 0;
+
+    if (qty <= 0) {
+      Alert.alert("Invalid quantity", "Please enter a valid quantity.");
       return;
     }
 
     setSaving(true);
     try {
-      // Check if material already exists in inventory (case-insensitive)
-      const existing = materials.find(
-        (m) => m.name.toLowerCase() === quickAddForm.name.toLowerCase()
-      );
-
-      if (existing) {
-        // Update existing material: add the new stock to current stock
-        const updatedStock = existing.currentStock + newStock;
-        await apiRequest(`/api/raw-materials/${existing._id}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            currentStock: updatedStock,
-            category: quickAddForm.category,
-          }),
-        });
-        Alert.alert(
-          "Stock Updated",
-          `Added ${newStock} ${quickAddForm.unit} to ${existing.name}. New stock: ${updatedStock} ${existing.unit}`
-        );
-      } else {
-        // Create new material
-        const payload = {
+      await apiRequest("/api/raw-materials", {
+        method: "POST",
+        body: JSON.stringify({
           name: quickAddForm.name,
-          category: quickAddForm.category,
-          unit: quickAddForm.unit,
-          currentStock: newStock,
-        };
-        await apiRequest("/api/raw-materials", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        Alert.alert("Success", `${quickAddForm.name} added to inventory.`);
-      }
+          qty,
+        }),
+      });
+
+      Alert.alert("Success", `${quickAddForm.name} stock added successfully.`);
       closeAddModal();
       fetchMaterials();
       fetchFoodItemMaterials();
@@ -258,16 +229,16 @@ export default function RawMaterialInventory() {
     resetQuickAdd();
   };
 
-  // ----- Edit Material (now includes stock) -----
+  // ----- Edit Material -----
   const openEditModal = (material: RawMaterial) => {
     setEditingMaterial(material);
     setEditForm({
       name: material.name,
-      category: material.category,
-      unit: material.unit,
-      preferredSupplier: material.preferredSupplier,
-      averageCost: material.averageCost.toString(),
-      currentStock: material.currentStock.toString(), // <-- prefill
+      category: material.category || "",
+      unit: material.unit || "",
+      preferredSupplier: material.preferredSupplier || "",
+      averageCost: material.averageCost?.toString?.() || "0",
+      addQty: "",
     });
     setEditModalVisible(true);
   };
@@ -275,22 +246,33 @@ export default function RawMaterialInventory() {
   const handleUpdate = async () => {
     if (!editingMaterial) return;
     setSaving(true);
+
     try {
-      // 1. Metadata updates (name, category, unit, supplier, cost)
       const metadataPayload: any = {};
-      if (editForm.name !== editingMaterial.name) metadataPayload.name = editForm.name;
-      if (editForm.category !== editingMaterial.category) metadataPayload.category = editForm.category;
-      if (editForm.unit !== editingMaterial.unit) metadataPayload.unit = editForm.unit;
-      if (editForm.preferredSupplier !== editingMaterial.preferredSupplier)
+
+      if (editForm.name !== editingMaterial.name) {
+        metadataPayload.name = editForm.name;
+      }
+
+      if (editForm.category !== editingMaterial.category) {
+        metadataPayload.category = editForm.category;
+      }
+
+      if (editForm.unit !== editingMaterial.unit) {
+        metadataPayload.unit = editForm.unit;
+      }
+
+      if (editForm.preferredSupplier !== editingMaterial.preferredSupplier) {
         metadataPayload.preferredSupplier = editForm.preferredSupplier;
-      if (parseFloat(editForm.averageCost) !== editingMaterial.averageCost)
-        metadataPayload.averageCost = parseFloat(editForm.averageCost);
+      }
 
-      // 2. Stock update
-      const newStock = parseFloat(editForm.currentStock);
-      const stockChanged = !isNaN(newStock) && newStock !== editingMaterial.currentStock;
+      if (parseFloat(editForm.averageCost || "0") !== editingMaterial.averageCost) {
+        metadataPayload.averageCost = parseFloat(editForm.averageCost || "0");
+      }
 
-      // Perform metadata update if needed
+      const addQty = parseFloat(editForm.addQty || "0");
+      const stockChanged = !isNaN(addQty) && addQty > 0;
+
       if (Object.keys(metadataPayload).length > 0) {
         await apiRequest(`/api/raw-materials/${editingMaterial._id}`, {
           method: "PATCH",
@@ -298,14 +280,16 @@ export default function RawMaterialInventory() {
         });
       }
 
-      // Perform stock adjustment if needed
       if (stockChanged) {
         await apiRequest(`/api/raw-materials/${editingMaterial._id}/stock`, {
           method: "PATCH",
           body: JSON.stringify({
-            newStock,
-            reason: "Edited from Edit modal",
-            notes: undefined,
+            qty: addQty,
+            reason: "Added from edit modal",
+            averageCost:
+              editForm.averageCost !== ""
+                ? parseFloat(editForm.averageCost)
+                : undefined,
           }),
         });
       }
@@ -332,19 +316,20 @@ export default function RawMaterialInventory() {
     setShowUnitDropdown(false);
   };
 
-  // ----- Stock Adjustment Modal (direct adjustment) -----
+  // ----- Stock Add Modal -----
   const openStockModal = (material: RawMaterial) => {
     setSelectedMaterialForStock(material);
-    setNewStockValue(material.currentStock.toString());
+    setAddStockValue("");
     setStockReason("");
     setStockModalVisible(true);
   };
 
   const handleStockUpdate = async () => {
     if (!selectedMaterialForStock) return;
-    const newStock = parseFloat(newStockValue);
-    if (isNaN(newStock)) {
-      Alert.alert("Invalid input", "Please enter a valid number for stock.");
+
+    const qty = parseFloat(addStockValue);
+    if (isNaN(qty) || qty <= 0) {
+      Alert.alert("Invalid input", "Please enter a valid quantity.");
       return;
     }
 
@@ -353,14 +338,17 @@ export default function RawMaterialInventory() {
       await apiRequest(`/api/raw-materials/${selectedMaterialForStock._id}/stock`, {
         method: "PATCH",
         body: JSON.stringify({
-          newStock,
-          reason: stockReason.trim() || "Manual adjustment",
-          notes: stockReason.trim() || undefined,
+          qty,
+          reason: stockReason.trim() || "Manual stock add",
         }),
       });
+
       setStockModalVisible(false);
       fetchMaterials();
-      Alert.alert("Success", `Stock for ${selectedMaterialForStock.name} updated to ${newStock} ${selectedMaterialForStock.unit}.`);
+      Alert.alert(
+        "Success",
+        `${qty} ${selectedMaterialForStock.unit} added to ${selectedMaterialForStock.name}.`
+      );
     } catch (err: any) {
       Alert.alert("Error", err.message);
     } finally {
@@ -371,7 +359,7 @@ export default function RawMaterialInventory() {
   const closeStockModal = () => {
     setStockModalVisible(false);
     setSelectedMaterialForStock(null);
-    setNewStockValue("");
+    setAddStockValue("");
     setStockReason("");
   };
 
@@ -396,15 +384,7 @@ export default function RawMaterialInventory() {
     ]);
   };
 
-  const handleReorder = (item: RawMaterial) => {
-    Alert.alert(
-      "Reorder",
-      `Reorder request for ${item.reorderQuantity} ${item.unit} of ${item.name} has been sent to procurement.`
-    );
-  };
-
-  const criticalItems = materials.filter((i) => i.stockStatus === "critical");
-  const lowStockItems = materials.filter((i) => i.stockStatus === "low");
+  const outOfStockItems = materials.filter((i) => i.stockStatus === "out_of_stock");
 
   // ----- Render -----
   if (loading && materials.length === 0) {
@@ -420,7 +400,9 @@ export default function RawMaterialInventory() {
     return (
       <View style={styles.center}>
         <Feather name="alert-circle" size={48} color="#EF4444" />
-        <Text style={[styles.muted, { marginTop: 8, textAlign: "center" }]}>{error}</Text>
+        <Text style={[styles.muted, { marginTop: 8, textAlign: "center" }]}>
+          {error}
+        </Text>
         <Pressable onPress={fetchMaterials} style={styles.retryBtn}>
           <Text style={{ color: "#fff" }}>Retry</Text>
         </Pressable>
@@ -434,7 +416,7 @@ export default function RawMaterialInventory() {
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.h1}>Raw Material Inventory</Text>
-          <Text style={styles.muted}>Monitor stock levels and manage reorders</Text>
+          <Text style={styles.muted}>Manage stock from recipe raw materials</Text>
         </View>
       </View>
 
@@ -446,7 +428,8 @@ export default function RawMaterialInventory() {
             <Text style={[styles.cardTitle, { marginLeft: 8 }]}>From Food Items</Text>
           </View>
           <Text style={styles.cardDesc}>
-            These materials are used in your recipes. Add them to inventory with an initial quantity.
+            These materials are used in your recipes. Select one and add quantity to
+            inventory.
           </Text>
         </View>
 
@@ -489,22 +472,24 @@ export default function RawMaterialInventory() {
         )}
       </Card>
 
-      {/* Critical Alerts */}
-      {criticalItems.length > 0 && (
+      {/* Out of Stock */}
+      {outOfStockItems.length > 0 && (
         <Card style={{ borderColor: "#fecaca" }}>
           <View style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 }}>
             <View style={styles.rowCenter}>
               <Feather name="alert-triangle" size={18} color="#b91c1c" />
               <Text style={[styles.cardTitle, { color: "#b91c1c", marginLeft: 8 }]}>
-                Critical Stock Alerts
+                Out of Stock
               </Text>
             </View>
             <Text style={styles.cardDesc}>
-              {criticalItems.length} item{criticalItems.length > 1 ? "s" : ""} require immediate attention
+              {outOfStockItems.length} item
+              {outOfStockItems.length > 1 ? "s are" : " is"} out of stock
             </Text>
           </View>
+
           <View style={{ padding: 12, gap: 8 }}>
-            {criticalItems.map((item) => (
+            {outOfStockItems.map((item) => (
               <View
                 key={item._id}
                 style={{
@@ -517,71 +502,23 @@ export default function RawMaterialInventory() {
                 }}
               >
                 <View style={{ flexShrink: 1 }}>
-                  <Text style={{ fontWeight: "700", color: "#111827" }}>{item.name}</Text>
+                  <Text style={{ fontWeight: "700", color: "#111827" }}>
+                    {item.name}
+                  </Text>
                   <Text style={{ color: "#6b7280", fontSize: 12 }}>
-                    Only {item.currentStock} {item.unit} remaining (Min: {item.minimumStock}{" "}
-                    {item.unit})
+                    Current stock: {item.currentStock} {item.unit}
                   </Text>
                 </View>
                 <Pressable
-                  onPress={() => handleReorder(item)}
+                  onPress={() => openStockModal(item)}
                   style={({ pressed }) => [
                     styles.btn,
                     { backgroundColor: "#dc2626" },
                     pressed && { opacity: 0.9 },
                   ]}
                 >
-                  <Feather name="shopping-cart" size={14} color="#fff" />
-                  <Text style={[styles.btnText, { color: "#fff" }]}>Reorder Now</Text>
-                </Pressable>
-              </View>
-            ))}
-          </View>
-        </Card>
-      )}
-
-      {/* Low Stock */}
-      {lowStockItems.length > 0 && (
-        <Card>
-          <View style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 }}>
-            <View style={styles.rowCenter}>
-              <Feather name="trending-down" size={18} color="#b45309" />
-              <Text style={[styles.cardTitle, { marginLeft: 8 }]}>Low Stock Items</Text>
-            </View>
-            <Text style={styles.cardDesc}>
-              {lowStockItems.length} item{lowStockItems.length > 1 ? "s" : ""} approaching minimum stock levels
-            </Text>
-          </View>
-          <View style={{ padding: 12, gap: 8 }}>
-            {lowStockItems.map((item) => (
-              <View
-                key={item._id}
-                style={{
-                  backgroundColor: "#fef3c7",
-                  padding: 10,
-                  borderRadius: 10,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <View style={{ flexShrink: 1 }}>
-                  <Text style={{ fontWeight: "700", color: "#111827" }}>{item.name}</Text>
-                  <Text style={{ color: "#6b7280", fontSize: 12 }}>
-                    {item.currentStock} {item.unit} remaining (Min: {item.minimumStock}{" "}
-                    {item.unit})
-                  </Text>
-                </View>
-                <Pressable
-                  onPress={() => handleReorder(item)}
-                  style={({ pressed }) => [
-                    styles.btn,
-                    { backgroundColor: "#e5e7eb" },
-                    pressed && { opacity: 0.9 },
-                  ]}
-                >
-                  <Feather name="shopping-cart" size={14} color="#111827" />
-                  <Text style={[styles.btnText, { color: "#111827" }]}>Reorder</Text>
+                  <Feather name="plus-circle" size={14} color="#fff" />
+                  <Text style={[styles.btnText, { color: "#fff" }]}>Add Stock</Text>
                 </Pressable>
               </View>
             ))}
@@ -610,20 +547,16 @@ export default function RawMaterialInventory() {
           <View style={{ padding: 12, gap: 12 }}>
             {materials.map((item) => {
               const sc = getStatusColors(item.stockStatus);
-              const pct = getStockPercentage(item.currentStock, item.maximumStock);
+              const pct = item.currentStock > 0 ? 100 : 0;
               const barColor =
-                item.stockStatus === "critical"
-                  ? "#dc2626"
-                  : item.stockStatus === "low"
-                  ? "#b45309"
-                  : "#16a34a";
+                item.stockStatus === "out_of_stock" ? "#dc2626" : "#16a34a";
 
               return (
                 <View key={item._id} style={styles.itemCard}>
                   <View style={styles.itemTopRow}>
                     <View>
                       <Text style={styles.itemTitle}>{item.name}</Text>
-                      <Text style={styles.itemCat}>{item.category}</Text>
+                      <Text style={styles.itemCat}>{item.category || "Other"}</Text>
                     </View>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                       <Badge label={item.stockStatus} bg={sc.bg} fg={sc.fg} />
@@ -631,9 +564,12 @@ export default function RawMaterialInventory() {
                         <Feather name="edit-2" size={16} color="#6b7280" />
                       </Pressable>
                       <Pressable onPress={() => openStockModal(item)} hitSlop={10}>
-                        <Feather name="sliders" size={16} color="#6b7280" />
+                        <Feather name="plus-circle" size={16} color="#6b7280" />
                       </Pressable>
-                      <Pressable onPress={() => handleDelete(item._id, item.name)} hitSlop={10}>
+                      <Pressable
+                        onPress={() => handleDelete(item._id, item.name)}
+                        hitSlop={10}
+                      >
                         <Feather name="trash-2" size={16} color="#ef4444" />
                       </Pressable>
                     </View>
@@ -643,7 +579,7 @@ export default function RawMaterialInventory() {
                     <View style={styles.rowBetween}>
                       <Text style={styles.small}>Stock Level</Text>
                       <Text style={styles.small}>
-                        {item.currentStock}/{item.maximumStock} {item.unit}
+                        {item.currentStock} {item.unit}
                       </Text>
                     </View>
                     <ProgressBar value={pct} color={barColor} />
@@ -652,21 +588,23 @@ export default function RawMaterialInventory() {
                   <View style={styles.metaGrid}>
                     <View style={styles.metaCol}>
                       <Text style={styles.metaLabel}>Supplier</Text>
-                      <Text style={styles.metaValue}>{item.preferredSupplier || "—"}</Text>
+                      <Text style={styles.metaValue}>
+                        {item.preferredSupplier || "—"}
+                      </Text>
                     </View>
                     <View style={styles.metaCol}>
                       <Text style={styles.metaLabel}>Cost per {item.unit}</Text>
-                      <Text style={styles.metaValue}>${item.averageCost.toFixed(2)}</Text>
+                      <Text style={styles.metaValue}>
+                        ${Number(item.averageCost || 0).toFixed(2)}
+                      </Text>
                     </View>
                     <View style={styles.metaCol}>
-                      <Text style={styles.metaLabel}>Reorder Qty</Text>
-                      <Text style={styles.metaValue}>
-                        {item.reorderQuantity} {item.unit}
-                      </Text>
+                      <Text style={styles.metaLabel}>Status</Text>
+                      <Text style={styles.metaValue}>{item.stockStatus}</Text>
                     </View>
                   </View>
 
-                  {(item.stockStatus === "critical" || item.stockStatus === "low") && (
+                  {item.stockStatus === "out_of_stock" && (
                     <View
                       style={{
                         paddingTop: 10,
@@ -675,32 +613,19 @@ export default function RawMaterialInventory() {
                       }}
                     >
                       <Pressable
-                        onPress={() => handleReorder(item)}
+                        onPress={() => openStockModal(item)}
                         style={({ pressed }) => [
                           styles.btn,
                           {
                             alignSelf: "flex-start",
-                            backgroundColor:
-                              item.stockStatus === "critical" ? "#dc2626" : "#e5e7eb",
+                            backgroundColor: "#dc2626",
                           },
                           pressed && { opacity: 0.9 },
                         ]}
                       >
-                        <Feather
-                          name="shopping-cart"
-                          size={14}
-                          color={item.stockStatus === "critical" ? "#fff" : "#111827"}
-                        />
-                        <Text
-                          style={[
-                            styles.btnText,
-                            {
-                              color:
-                                item.stockStatus === "critical" ? "#fff" : "#111827",
-                            },
-                          ]}
-                        >
-                          Reorder {item.reorderQuantity} {item.unit}
+                        <Feather name="plus-circle" size={14} color="#fff" />
+                        <Text style={[styles.btnText, { color: "#fff" }]}>
+                          Add Stock
                         </Text>
                       </Pressable>
                     </View>
@@ -712,7 +637,7 @@ export default function RawMaterialInventory() {
         )}
       </Card>
 
-      {/* Modal for Quick Add (from Food Item) */}
+      {/* Modal for Quick Add */}
       <Modal
         transparent
         visible={addModalVisible}
@@ -739,25 +664,14 @@ export default function RawMaterialInventory() {
             >
               <View style={styles.formRow}>
                 <View style={styles.field}>
-                  <Text style={styles.label}>Current Stock *</Text>
+                  <Text style={styles.label}>Quantity *</Text>
                   <TextInput
                     style={styles.input}
                     keyboardType="numeric"
                     placeholder="0"
-                    value={quickAddForm.currentStock}
+                    value={quickAddForm.qty}
                     onChangeText={(text) =>
-                      setQuickAddForm({ ...quickAddForm, currentStock: text })
-                    }
-                  />
-                </View>
-                <View style={styles.field}>
-                  <Text style={styles.label}>Category</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g., Meat, Vegetables"
-                    value={quickAddForm.category}
-                    onChangeText={(text) =>
-                      setQuickAddForm({ ...quickAddForm, category: text })
+                      setQuickAddForm({ ...quickAddForm, qty: text })
                     }
                   />
                 </View>
@@ -776,7 +690,9 @@ export default function RawMaterialInventory() {
                 {saving ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={{ color: "white", fontWeight: "600" }}>Add to Inventory</Text>
+                  <Text style={{ color: "white", fontWeight: "600" }}>
+                    Add to Inventory
+                  </Text>
                 )}
               </Pressable>
             </View>
@@ -784,7 +700,7 @@ export default function RawMaterialInventory() {
         </View>
       </Modal>
 
-      {/* Modal for Edit Material (now includes stock) */}
+      {/* Modal for Edit Material */}
       <Modal
         transparent
         visible={editModalVisible}
@@ -798,7 +714,7 @@ export default function RawMaterialInventory() {
           >
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Edit Material</Text>
-              <Text style={styles.modalDesc}>Update material details and stock</Text>
+              <Text style={styles.modalDesc}>Update details and optionally add stock</Text>
             </View>
 
             <ScrollView
@@ -821,7 +737,9 @@ export default function RawMaterialInventory() {
                   <TextInput
                     style={styles.input}
                     value={editForm.category}
-                    onChangeText={(text) => setEditForm({ ...editForm, category: text })}
+                    onChangeText={(text) =>
+                      setEditForm({ ...editForm, category: text })
+                    }
                   />
                 </View>
               </View>
@@ -861,12 +779,15 @@ export default function RawMaterialInventory() {
                     )}
                   </View>
                 </View>
+
                 <View style={styles.field}>
                   <Text style={styles.label}>Preferred Supplier</Text>
                   <TextInput
                     style={styles.input}
                     value={editForm.preferredSupplier}
-                    onChangeText={(text) => setEditForm({ ...editForm, preferredSupplier: text })}
+                    onChangeText={(text) =>
+                      setEditForm({ ...editForm, preferredSupplier: text })
+                    }
                   />
                 </View>
               </View>
@@ -878,16 +799,19 @@ export default function RawMaterialInventory() {
                     style={styles.input}
                     keyboardType="numeric"
                     value={editForm.averageCost}
-                    onChangeText={(text) => setEditForm({ ...editForm, averageCost: text })}
+                    onChangeText={(text) =>
+                      setEditForm({ ...editForm, averageCost: text })
+                    }
                   />
                 </View>
                 <View style={styles.field}>
-                  <Text style={styles.label}>Current Stock</Text>
+                  <Text style={styles.label}>Add Stock Qty</Text>
                   <TextInput
                     style={styles.input}
                     keyboardType="numeric"
-                    value={editForm.currentStock}
-                    onChangeText={(text) => setEditForm({ ...editForm, currentStock: text })}
+                    value={editForm.addQty}
+                    onChangeText={(text) => setEditForm({ ...editForm, addQty: text })}
+                    placeholder="Optional"
                   />
                 </View>
               </View>
@@ -901,7 +825,9 @@ export default function RawMaterialInventory() {
                 {saving ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={{ color: "white", fontWeight: "600" }}>Save Changes</Text>
+                  <Text style={{ color: "white", fontWeight: "600" }}>
+                    Save Changes
+                  </Text>
                 )}
               </Pressable>
             </View>
@@ -909,7 +835,7 @@ export default function RawMaterialInventory() {
         </View>
       </Modal>
 
-      {/* Modal for Direct Stock Adjustment (kept) */}
+      {/* Modal for Direct Stock Add */}
       <Modal
         transparent
         visible={stockModalVisible}
@@ -922,7 +848,7 @@ export default function RawMaterialInventory() {
             style={styles.modalCard}
           >
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Adjust Stock</Text>
+              <Text style={styles.modalTitle}>Add Stock</Text>
               <Text style={styles.modalDesc}>
                 {selectedMaterialForStock?.name} ({selectedMaterialForStock?.unit})
               </Text>
@@ -936,16 +862,17 @@ export default function RawMaterialInventory() {
             >
               <View style={styles.formRow}>
                 <View style={styles.field}>
-                  <Text style={styles.label}>New Stock Quantity *</Text>
+                  <Text style={styles.label}>Add Stock Quantity *</Text>
                   <TextInput
                     style={styles.input}
                     keyboardType="numeric"
-                    value={newStockValue}
-                    onChangeText={setNewStockValue}
-                    placeholder="Enter new stock amount"
+                    value={addStockValue}
+                    onChangeText={setAddStockValue}
+                    placeholder="Enter quantity to add"
                   />
                 </View>
               </View>
+
               <View style={styles.formRow}>
                 <View style={styles.field}>
                   <Text style={styles.label}>Reason (optional)</Text>
@@ -953,7 +880,7 @@ export default function RawMaterialInventory() {
                     style={styles.input}
                     value={stockReason}
                     onChangeText={setStockReason}
-                    placeholder="e.g., physical count, wastage, return"
+                    placeholder="e.g., purchase, correction"
                   />
                 </View>
               </View>
@@ -967,7 +894,9 @@ export default function RawMaterialInventory() {
                 {saving ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={{ color: "white", fontWeight: "600" }}>Update Stock</Text>
+                  <Text style={{ color: "white", fontWeight: "600" }}>
+                    Add Stock
+                  </Text>
                 )}
               </Pressable>
             </View>
@@ -982,23 +911,13 @@ export default function RawMaterialInventory() {
 const styles = StyleSheet.create({
   page: { padding: 16, paddingBottom: 32, gap: 16, backgroundColor: "#f9fafb" },
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 32 },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   h1: { fontSize: 24, fontWeight: "700", color: "#111827" },
   muted: { color: "#6b7280", marginTop: 2 },
-  addBtn: { flexDirection: "row", alignItems: "center" },
-  addBtnGrad: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  addBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "600", marginLeft: 4 },
   retryBtn: {
     backgroundColor: "#111827",
     paddingVertical: 10,
@@ -1019,11 +938,28 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
   cardDesc: { color: "#6b7280", fontSize: 12, marginTop: 4 },
-  badge: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, alignSelf: "flex-start" },
+  badge: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+  },
   badgeText: { fontSize: 12, fontWeight: "700" },
-  btn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 },
+  btn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
   btnText: { fontWeight: "800", letterSpacing: 0.3 },
-  progressBg: { height: 8, borderRadius: 999, backgroundColor: "#e5e7eb", overflow: "hidden" },
+  progressBg: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: "#e5e7eb",
+    overflow: "hidden",
+  },
   progressFill: { height: 8, borderRadius: 999 },
   itemCard: {
     borderWidth: 1,
@@ -1041,12 +977,20 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: "#fefce8",
   },
-  itemTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  itemTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
   itemTitle: { fontSize: 15, fontWeight: "700", color: "#111827" },
   itemCat: { color: "#6b7280", fontSize: 12 },
   smallHint: { fontSize: 11, color: "#9ca3af" },
   rowCenter: { flexDirection: "row", alignItems: "center" },
-  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  rowBetween: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   small: { fontSize: 12, color: "#111827" },
   metaGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 2 },
   metaCol: { width: "48%", gap: 2 },
@@ -1062,8 +1006,19 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   addToInventoryBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", padding: 20 },
-  modalCard: { backgroundColor: "white", borderRadius: 16, padding: 16, gap: 12, maxHeight: "86%" },
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+    maxHeight: "86%",
+  },
   modalHeader: { marginBottom: 4 },
   modalTitle: { fontSize: 18, fontWeight: "700" },
   modalDesc: { color: "#6b7280" },
@@ -1072,7 +1027,13 @@ const styles = StyleSheet.create({
   formRow: { flexDirection: "row", gap: 12 },
   field: { flex: 1, gap: 6 },
   label: { fontWeight: "600", color: "#374151" },
-  input: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  input: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
   unitBox: {
     borderWidth: 1,
     borderColor: "#d1d5db",
@@ -1098,7 +1059,23 @@ const styles = StyleSheet.create({
   },
   unitOption: { paddingVertical: 10, paddingHorizontal: 12 },
   unitOptionText: { fontSize: 14, color: "#111827" },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 12, marginTop: 6 },
-  btnOutline: { paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderRadius: 10, borderColor: "#d1d5db" },
-  btnSolid: { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#111827", borderRadius: 10 },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 12,
+    marginTop: 6,
+  },
+  btnOutline: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    borderColor: "#d1d5db",
+  },
+  btnSolid: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "#111827",
+    borderRadius: 10,
+  },
 });
