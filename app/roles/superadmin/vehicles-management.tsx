@@ -11,11 +11,16 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Dimensions,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "@/constants/env";
+
+const { width: screenWidth } = Dimensions.get("window");
 
 /* ===================== Types ===================== */
 
@@ -161,13 +166,16 @@ function SolidButton({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={{ borderRadius: 10, overflow: "hidden" }}
+      style={({ pressed }) => [
+        { borderRadius: 10, overflow: "hidden", opacity: pressed ? 0.9 : 1 },
+        style,
+      ]}
     >
       <LinearGradient
         colors={["#fde047", "#facc15"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[styles.btnSolid, disabled && { opacity: 0.5 }, style]}
+        style={[styles.btnSolid, disabled && { opacity: 0.5 }]}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           {children}
@@ -422,8 +430,8 @@ export default function VehiclesManagement() {
         return (
           <View key={v.id} style={styles.card}>
             <View style={styles.rowBetween}>
-              <View>
-                <View style={[styles.row, { gap: 8, alignItems: "center" }]}>
+              <View style={{ flex: 1 }}>
+                <View style={[styles.row, { gap: 8, alignItems: "center", marginBottom: 4 }]}>
                   <Feather name="truck" size={18} />
                   <Text style={styles.cardTitle}>{v.registrationNo}</Text>
                 </View>
@@ -431,7 +439,7 @@ export default function VehiclesManagement() {
                   Last service: {v.serviceDate}
                 </Text>
               </View>
-              <View style={{ alignItems: "flex-end" }}>
+              <View style={{ marginLeft: 8 }}>
                 <View
                   style={[
                     styles.badge,
@@ -456,7 +464,7 @@ export default function VehiclesManagement() {
                     onPress={() => assignRider(v.id, null)}
                   >
                     <Feather name="user-x" size={14} />
-                    <Text> Unassign</Text>
+                    <Text style={{ marginLeft: 4 }}> Unassign</Text>
                   </Pressable>
                 ) : (
                   <AssignMenu
@@ -471,55 +479,51 @@ export default function VehiclesManagement() {
               )}
             </View>
 
-            <View
-              style={[
-                styles.row,
-                { justifyContent: "flex-end", gap: 8, marginTop: 10 },
-              ]}
-            >
+            {/* Action Buttons - Wrapped for better mobile layout */}
+            <View style={styles.actionButtonsContainer}>
               {v.status === "Issue" ? (
                 <Pressable
-                  style={styles.btnOutlineSm}
+                  style={[styles.btnOutlineSm, styles.actionButton]}
                   onPress={() => clearIssue(v.id)}
                 >
                   <Feather name="check-circle" size={14} />
-                  <Text> Resolve</Text>
+                  <Text style={{ marginLeft: 4 }}> Resolve</Text>
                 </Pressable>
               ) : (
                 <Pressable
-                  style={styles.btnOutlineSm}
+                  style={[styles.btnOutlineSm, styles.actionButton]}
                   onPress={() => markIssue(v)}
                 >
                   <Feather name="alert-triangle" size={14} />
-                  <Text> Report Issue</Text>
+                  <Text style={{ marginLeft: 4 }}> Report Issue</Text>
                 </Pressable>
               )}
 
               <Pressable
-                style={styles.btnOutlineSm}
+                style={[styles.btnOutlineSm, styles.actionButton]}
                 onPress={() => openServiceFor(v)}
               >
                 <Feather name="clock" size={14} />
-                <Text> Service</Text>
+                <Text style={{ marginLeft: 4 }}> Service</Text>
               </Pressable>
 
               <Pressable
-                style={styles.btnOutlineSm}
+                style={[styles.btnOutlineSm, styles.actionButton]}
                 onPress={() => {
                   setEditVehicleData(v);
                   setOpenEditVehicle(true);
                 }}
               >
                 <Feather name="edit-3" size={14} color="#2563eb" />
-                <Text style={{ color: "#2563eb" }}> Edit</Text>
+                <Text style={{ marginLeft: 4, color: "#2563eb" }}> Edit</Text>
               </Pressable>
 
               <Pressable
-                style={[styles.btnOutlineSm, { borderColor: "#ef4444" }]}
+                style={[styles.btnOutlineSm, styles.actionButton, { borderColor: "#ef4444" }]}
                 onPress={() => openRemoveFor(v)}
               >
                 <Feather name="trash-2" size={14} color="#ef4444" />
-                <Text style={{ color: "#ef4444" }}> Remove</Text>
+                <Text style={{ marginLeft: 4, color: "#ef4444" }}> Remove</Text>
               </Pressable>
             </View>
           </View>
@@ -530,7 +534,7 @@ export default function VehiclesManagement() {
         <Text
           style={[styles.subtleSmall, { textAlign: "center", marginTop: 16 }]}
         >
-          No vehicles found. Use “Add Vehicle” to create one.
+          No vehicles found. Use "Add Vehicle" to create one.
         </Text>
       )}
     </View>
@@ -577,75 +581,83 @@ export default function VehiclesManagement() {
         animationType="slide"
         onRequestClose={() => setOpenAdd(false)}
       >
-        <View style={styles.backdrop}>
-          <View style={[styles.card, { padding: 16, gap: 12, width: "100%" }]}>
-            <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
-              <Feather name="truck" size={18} />
-              <Text style={{ fontSize: 18, fontWeight: "800" }}>
-                Add New Vehicle
-              </Text>
-            </View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.backdrop}
+        >
+          <View style={styles.modalContainer}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={[styles.card, { padding: 16, gap: 12 }]}>
+                <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
+                  <Feather name="truck" size={18} />
+                  <Text style={{ fontSize: 18, fontWeight: "800" }}>
+                    Add New Vehicle
+                  </Text>
+                </View>
 
-            {field(
-              "Registration Number",
-              <TextInput
-                value={regNo}
-                onChangeText={setRegNo}
-                placeholder="e.g., MH12AB1234"
-                style={styles.input}
-              />
-            )}
-
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <View style={{ flex: 1 }}>
                 {field(
-                  "Last Service Date",
+                  "Registration Number *",
                   <TextInput
-                    value={serviceDate}
-                    onChangeText={setServiceDate}
-                    placeholder="YYYY-MM-DD"
+                    value={regNo}
+                    onChangeText={setRegNo}
+                    placeholder="e.g., MH12AB1234"
                     style={styles.input}
                   />
                 )}
-              </View>
-              <View style={{ flex: 1 }}>
+
+                <View style={styles.rowWithGap}>
+                  <View style={styles.flex1}>
+                    {field(
+                      "Last Service Date",
+                      <TextInput
+                        value={serviceDate}
+                        onChangeText={setServiceDate}
+                        placeholder="YYYY-MM-DD"
+                        style={styles.input}
+                      />
+                    )}
+                  </View>
+                  <View style={styles.flex1}>
+                    {field(
+                      "Initial Status",
+                      <Segmented
+                        options={["Available", "Issue"]}
+                        value={initialStatus}
+                        onChange={(v) => setInitialStatus(v as VehicleStatus)}
+                      />
+                    )}
+                  </View>
+                </View>
+
                 {field(
-                  "Initial Status",
-                  <Segmented
-                    options={["Available", "Issue"]}
-                    value={initialStatus}
-                    onChange={(v) => setInitialStatus(v as VehicleStatus)}
+                  "Notes",
+                  <TextInput
+                    value={notes}
+                    onChangeText={setNotes}
+                    placeholder="Any additional notes"
+                    multiline
+                    numberOfLines={3}
+                    style={[styles.input, styles.textArea]}
                   />
                 )}
+
+                <View style={[styles.row, { justifyContent: "flex-end", gap: 8, marginTop: 8 }]}>
+                  <Pressable
+                    style={styles.btnOutline}
+                    onPress={() => setOpenAdd(false)}
+                  >
+                    <Text>Cancel</Text>
+                  </Pressable>
+                  <SolidButton onPress={addVehicle} disabled={!regNo.trim()}>
+                    <Text style={[styles.btnSolidText, { color: "#111" }]}>
+                      Add Vehicle
+                    </Text>
+                  </SolidButton>
+                </View>
               </View>
-            </View>
-
-            {field(
-              "Notes",
-              <TextInput
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="Any additional notes"
-                multiline
-                style={[styles.input, { height: 90, textAlignVertical: "top" }]}
-              />
-            )}
-
-            <View style={[styles.row, { justifyContent: "flex-end", gap: 8 }]}>
-              <Pressable
-                style={styles.btnOutline}
-                onPress={() => setOpenAdd(false)}
-              >
-                <Text>Cancel</Text>
-              </Pressable>
-              <SolidButton onPress={addVehicle} disabled={!regNo.trim()}>
-                <Text style={[styles.btnSolidText, { color: "#111" }]}>
-                  Add Vehicle
-                </Text>
-              </SolidButton>
-            </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ========== Report Issue Modal ========== */}
@@ -655,61 +667,66 @@ export default function VehiclesManagement() {
         animationType="slide"
         onRequestClose={() => setOpenIssue(false)}
       >
-        <View style={styles.backdrop}>
-          <View style={[styles.card, { padding: 16, gap: 12, width: "100%" }]}>
-            <View>
-              <Text style={{ fontSize: 18, fontWeight: "800" }}>
-                Report Vehicle Issue
-              </Text>
-              <Text style={styles.subtleSmall}>
-                Vehicle: {activeVehicle?.registrationNo ?? "-"}
-              </Text>
-            </View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.backdrop}
+        >
+          <View style={styles.modalContainer}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={[styles.card, { padding: 16, gap: 12 }]}>
+                <View>
+                  <Text style={{ fontSize: 18, fontWeight: "800" }}>
+                    Report Vehicle Issue
+                  </Text>
+                  <Text style={styles.subtleSmall}>
+                    Vehicle: {activeVehicle?.registrationNo ?? "-"}
+                  </Text>
+                </View>
 
-            {field(
-              "Issue Type",
-              <Segmented
-                options={[
-                  "Puncture",
-                  "Maintenance",
-                  "Breakdown",
-                  "Accident",
-                  "Other",
-                ]}
-                value={issueType}
-                onChange={setIssueType}
-              />
-            )}
+                {field(
+                  "Issue Type",
+                  <Segmented
+                    options={[
+                      "Puncture",
+                      "Maintenance",
+                      "Breakdown",
+                      "Accident",
+                      "Other",
+                    ]}
+                    value={issueType}
+                    onChange={setIssueType}
+                  />
+                )}
 
-            {field(
-              "Description",
-              <TextInput
-                value={issueDesc}
-                onChangeText={setIssueDesc}
-                placeholder="Describe the issue in detail"
-                multiline
-                style={[
-                  styles.input,
-                  { height: 100, textAlignVertical: "top" },
-                ]}
-              />
-            )}
+                {field(
+                  "Description",
+                  <TextInput
+                    value={issueDesc}
+                    onChangeText={setIssueDesc}
+                    placeholder="Describe the issue in detail"
+                    multiline
+                    numberOfLines={4}
+                    style={[styles.input, styles.textArea]}
+                  />
+                )}
 
-            <View style={[styles.row, { justifyContent: "flex-end", gap: 8 }]}>
-              <Pressable
-                style={styles.btnOutline}
-                onPress={() => setOpenIssue(false)}
-              >
-                <Text>Cancel</Text>
-              </Pressable>
-              <SolidButton onPress={submitIssue} disabled={!issueType}>
-                <Text style={[styles.btnSolidText, { color: "#111" }]}>
-                  Report Issue
-                </Text>
-              </SolidButton>
-            </View>
+                <View style={[styles.row, { justifyContent: "flex-end", gap: 8, marginTop: 8 }]}>
+                  <Pressable
+                    style={styles.btnOutline}
+                    onPress={() => setOpenIssue(false)}
+                  >
+                    <Text>Cancel</Text>
+                  </Pressable>
+                  <SolidButton onPress={submitIssue} disabled={!issueType}>
+                    <Text style={[styles.btnSolidText, { color: "#111" }]}>
+                      Report Issue
+                    </Text>
+                  </SolidButton>
+                </View>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ========== Service Records Modal ========== */}
@@ -720,60 +737,64 @@ export default function VehiclesManagement() {
         onRequestClose={() => setOpenService(false)}
       >
         <View style={styles.backdrop}>
-          <View style={[styles.card, { padding: 16, gap: 12, width: "100%" }]}>
-            <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
-              <Feather name="clock" size={18} />
-              <Text style={{ fontSize: 18, fontWeight: "800" }}>
-                Service Records
-              </Text>
-            </View>
-            <Text style={styles.subtleSmall}>
-              Vehicle: {activeVehicle?.registrationNo ?? "-"}
-            </Text>
-
-            <View style={{ gap: 8 }}>
-              {activeVehicle &&
-              serviceRecords.filter((s) => s.vehicleId === activeVehicle.id)
-                .length > 0 ? (
-                serviceRecords
-                  .filter((s) => s.vehicleId === activeVehicle.id)
-                  .map((rec) => (
-                    <View key={rec.id} style={styles.serviceRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.serviceTitle}>
-                          {rec.date} • {rec.type}
-                        </Text>
-                        <Text style={styles.subtleSmall}>
-                          {rec.description}
-                        </Text>
-                      </View>
-                      <View style={{ alignItems: "flex-end" }}>
-                        <Text style={styles.serviceCost}>
-                          ₹{rec.cost.toLocaleString()}
-                        </Text>
-                        <Text style={styles.subtleSmall}>{rec.mechanic}</Text>
-                      </View>
-                    </View>
-                  ))
-              ) : (
-                <Text
-                  style={[
-                    styles.subtleSmall,
-                    { textAlign: "center", paddingVertical: 10 },
-                  ]}
-                >
-                  No service records found for this vehicle
+          <View style={styles.modalContainer}>
+            <View style={[styles.card, { padding: 16, gap: 12 }]}>
+              <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
+                <Feather name="clock" size={18} />
+                <Text style={{ fontSize: 18, fontWeight: "800" }}>
+                  Service Records
                 </Text>
-              )}
-            </View>
+              </View>
+              <Text style={styles.subtleSmall}>
+                Vehicle: {activeVehicle?.registrationNo ?? "-"}
+              </Text>
 
-            <View style={[styles.row, { justifyContent: "flex-end" }]}>
-              <Pressable
-                style={styles.btnOutline}
-                onPress={() => setOpenService(false)}
-              >
-                <Text>Close</Text>
-              </Pressable>
+              <ScrollView style={{ maxHeight: 400 }}>
+                <View style={{ gap: 8 }}>
+                  {activeVehicle &&
+                  serviceRecords.filter((s) => s.vehicleId === activeVehicle.id)
+                    .length > 0 ? (
+                    serviceRecords
+                      .filter((s) => s.vehicleId === activeVehicle.id)
+                      .map((rec) => (
+                        <View key={rec.id} style={styles.serviceRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.serviceTitle}>
+                              {rec.date} • {rec.type}
+                            </Text>
+                            <Text style={styles.subtleSmall}>
+                              {rec.description}
+                            </Text>
+                          </View>
+                          <View style={{ alignItems: "flex-end" }}>
+                            <Text style={styles.serviceCost}>
+                              ₹{rec.cost.toLocaleString()}
+                            </Text>
+                            <Text style={styles.subtleSmall}>{rec.mechanic}</Text>
+                          </View>
+                        </View>
+                      ))
+                  ) : (
+                    <Text
+                      style={[
+                        styles.subtleSmall,
+                        { textAlign: "center", paddingVertical: 20 },
+                      ]}
+                    >
+                      No service records found for this vehicle
+                    </Text>
+                  )}
+                </View>
+              </ScrollView>
+
+              <View style={[styles.row, { justifyContent: "flex-end", marginTop: 8 }]}>
+                <Pressable
+                  style={styles.btnOutline}
+                  onPress={() => setOpenService(false)}
+                >
+                  <Text>Close</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -787,30 +808,32 @@ export default function VehiclesManagement() {
         onRequestClose={() => setOpenRemove(false)}
       >
         <View style={styles.backdrop}>
-          <View style={[styles.card, { padding: 16, gap: 12, width: "100%" }]}>
-            <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
-              <Feather name="trash-2" size={18} color="#ef4444" />
-              <Text
-                style={{ fontSize: 18, fontWeight: "800", color: "#ef4444" }}
-              >
-                Remove Vehicle
+          <View style={styles.modalContainer}>
+            <View style={[styles.card, { padding: 16, gap: 12 }]}>
+              <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
+                <Feather name="trash-2" size={18} color="#ef4444" />
+                <Text
+                  style={{ fontSize: 18, fontWeight: "800", color: "#ef4444" }}
+                >
+                  Remove Vehicle
+                </Text>
+              </View>
+              <Text style={styles.subtleSmall}>
+                Are you sure you want to remove vehicle{" "}
+                {activeVehicle?.registrationNo}? This action cannot be undone.
               </Text>
-            </View>
-            <Text style={styles.subtleSmall}>
-              Are you sure you want to remove vehicle{" "}
-              {activeVehicle?.registrationNo}? This action cannot be undone.
-            </Text>
 
-            <View style={[styles.row, { justifyContent: "flex-end", gap: 8 }]}>
-              <Pressable
-                style={styles.btnOutline}
-                onPress={() => setOpenRemove(false)}
-              >
-                <Text>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.btnDanger} onPress={confirmRemove}>
-                <Text style={styles.btnSolidText}>Remove Vehicle</Text>
-              </Pressable>
+              <View style={[styles.row, { justifyContent: "flex-end", gap: 8, marginTop: 8 }]}>
+                <Pressable
+                  style={styles.btnOutline}
+                  onPress={() => setOpenRemove(false)}
+                >
+                  <Text>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.btnDanger} onPress={confirmRemove}>
+                  <Text style={[styles.btnSolidText, { color: "#fff" }]}>Remove Vehicle</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -823,96 +846,104 @@ export default function VehiclesManagement() {
         animationType="slide"
         onRequestClose={() => setOpenEditVehicle(false)}
       >
-        <View style={styles.backdrop}>
-          <View style={[styles.card, { padding: 16, gap: 12, width: "100%" }]}>
-            <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
-              <Feather name="truck" size={18} />
-              <Text style={{ fontSize: 18, fontWeight: "800" }}>
-                Edit Vehicle
-              </Text>
-            </View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.backdrop}
+        >
+          <View style={styles.modalContainer}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={[styles.card, { padding: 16, gap: 12 }]}>
+                <View style={[styles.row, { alignItems: "center", gap: 8 }]}>
+                  <Feather name="truck" size={18} />
+                  <Text style={{ fontSize: 18, fontWeight: "800" }}>
+                    Edit Vehicle
+                  </Text>
+                </View>
 
-            {field(
-              "Registration Number",
-              <TextInput
-                value={editVehicleData?.registrationNo || ""}
-                onChangeText={(txt) =>
-                  setEditVehicleData((prev) =>
-                    prev ? { ...prev, registrationNo: txt } : prev
-                  )
-                }
-                placeholder="e.g., MH12AB1234"
-                style={styles.input}
-              />
-            )}
-
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <View style={{ flex: 1 }}>
                 {field(
-                  "Last Service Date",
+                  "Registration Number *",
                   <TextInput
-                    value={editVehicleData?.serviceDate || ""}
+                    value={editVehicleData?.registrationNo || ""}
                     onChangeText={(txt) =>
                       setEditVehicleData((prev) =>
-                        prev ? { ...prev, serviceDate: txt } : prev
+                        prev ? { ...prev, registrationNo: txt } : prev
                       )
                     }
-                    placeholder="YYYY-MM-DD"
+                    placeholder="e.g., MH12AB1234"
                     style={styles.input}
                   />
                 )}
-              </View>
 
-              <View style={{ flex: 1 }}>
+                <View style={styles.rowWithGap}>
+                  <View style={styles.flex1}>
+                    {field(
+                      "Last Service Date",
+                      <TextInput
+                        value={editVehicleData?.serviceDate || ""}
+                        onChangeText={(txt) =>
+                          setEditVehicleData((prev) =>
+                            prev ? { ...prev, serviceDate: txt } : prev
+                          )
+                        }
+                        placeholder="YYYY-MM-DD"
+                        style={styles.input}
+                      />
+                    )}
+                  </View>
+
+                  <View style={styles.flex1}>
+                    {field(
+                      "Status",
+                      <Segmented
+                        options={["Available", "Issue", "In Use"]}
+                        value={editVehicleData?.status || ""}
+                        onChange={(v) =>
+                          setEditVehicleData((prev) =>
+                            prev ? { ...prev, status: v as VehicleStatus } : prev
+                          )
+                        }
+                      />
+                    )}
+                  </View>
+                </View>
+
                 {field(
-                  "Status",
-                  <Segmented
-                    options={["Available", "Issue", "In Use"]}
-                    value={editVehicleData?.status || ""}
-                    onChange={(v) =>
+                  "Notes",
+                  <TextInput
+                    value={editVehicleData?.notes || ""}
+                    onChangeText={(txt) =>
                       setEditVehicleData((prev) =>
-                        prev ? { ...prev, status: v as VehicleStatus } : prev
+                        prev ? { ...prev, notes: txt } : prev
                       )
                     }
+                    placeholder="Any additional notes"
+                    multiline
+                    numberOfLines={3}
+                    style={[styles.input, styles.textArea]}
                   />
                 )}
+
+                <View style={[styles.row, { justifyContent: "flex-end", gap: 8, marginTop: 8 }]}>
+                  <Pressable
+                    style={styles.btnOutline}
+                    onPress={() => setOpenEditVehicle(false)}
+                  >
+                    <Text>Cancel</Text>
+                  </Pressable>
+
+                  <SolidButton
+                    onPress={handleUpdateVehicle}
+                    disabled={!editVehicleData?.registrationNo}
+                  >
+                    <Text style={[styles.btnSolidText, { color: "#111" }]}>
+                      Update Vehicle
+                    </Text>
+                  </SolidButton>
+                </View>
               </View>
-            </View>
-
-            {field(
-              "Notes",
-              <TextInput
-                value={editVehicleData?.notes || ""}
-                onChangeText={(txt) =>
-                  setEditVehicleData((prev) =>
-                    prev ? { ...prev, notes: txt } : prev
-                  )
-                }
-                placeholder="Any additional notes"
-                multiline
-                style={[styles.input, { height: 90, textAlignVertical: "top" }]}
-              />
-            )}
-
-            <View style={[styles.row, { justifyContent: "flex-end", gap: 8 }]}>
-              <Pressable
-                style={styles.btnOutline}
-                onPress={() => setOpenEditVehicle(false)}
-              >
-                <Text>Cancel</Text>
-              </Pressable>
-
-              <SolidButton
-                onPress={handleUpdateVehicle}
-                disabled={!editVehicleData?.registrationNo}
-              >
-                <Text style={[styles.btnSolidText, { color: "#111" }]}>
-                  Update Vehicle
-                </Text>
-              </SolidButton>
-            </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
   );
@@ -928,37 +959,44 @@ function AssignMenu({
   onPick: (name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  return open ? (
-    <View style={styles.assignMenu}>
-      {riders.map((r) => (
-        <Pressable
-          key={r.id}
-          style={styles.assignRow}
-          onPress={() => {
-            onPick(r.name);
-            setOpen(false);
-          }}
-        >
-          <Feather name="user-plus" size={14} />
-          <Text> {r.name}</Text>
-        </Pressable>
-      ))}
-      <Pressable
-        style={[
-          styles.assignRow,
-          { borderTopWidth: 1, borderColor: "#e5e7eb" },
-        ]}
-        onPress={() => setOpen(false)}
-      >
-        <Feather name="x" size={14} />
-        <Text> Close</Text>
+  
+  if (!open) {
+    return (
+      <Pressable style={styles.btnOutlineSm} onPress={() => setOpen(true)}>
+        <Feather name="user-plus" size={14} />
+        <Text style={{ marginLeft: 4 }}> Assign Rider</Text>
       </Pressable>
+    );
+  }
+  
+  return (
+    <View style={styles.assignMenuContainer}>
+      <View style={styles.assignMenu}>
+        {riders.map((r) => (
+          <Pressable
+            key={r.id}
+            style={styles.assignRow}
+            onPress={() => {
+              onPick(r.name);
+              setOpen(false);
+            }}
+          >
+            <Feather name="user-plus" size={14} />
+            <Text style={{ marginLeft: 8 }}> {r.name}</Text>
+          </Pressable>
+        ))}
+        <Pressable
+          style={[
+            styles.assignRow,
+            { borderTopWidth: 1, borderColor: "#e5e7eb" },
+          ]}
+          onPress={() => setOpen(false)}
+        >
+          <Feather name="x" size={14} />
+          <Text style={{ marginLeft: 8 }}> Close</Text>
+        </Pressable>
+      </View>
     </View>
-  ) : (
-    <Pressable style={styles.btnOutlineSm} onPress={() => setOpen(true)}>
-      <Feather name="user-plus" size={14} />
-      <Text> Assign Rider</Text>
-    </Pressable>
   );
 }
 
@@ -1001,18 +1039,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    flexWrap: "wrap",
   },
 
   h1: { fontSize: 22, fontWeight: "800", color: "#111827" },
-  subtle: { color: "#6b7280" },
+  subtle: { color: "#6b7280", fontSize: 14 },
   subtleSmall: { color: "#6b7280", fontSize: 12 },
 
   row: { flexDirection: "row" },
+  rowWithGap: { flexDirection: "row", gap: 12 },
   rowBetween: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
+  flex1: { flex: 1 },
 
   card: {
     backgroundColor: "#fff",
@@ -1026,9 +1067,9 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 2,
   },
-  cardTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  cardTitle: { fontSize: 16, fontWeight: "800", color: "#111827" },
 
-  label: { fontWeight: "700", color: "#111827" },
+  label: { fontWeight: "700", color: "#111827", fontSize: 14 },
 
   badge: {
     paddingHorizontal: 8,
@@ -1046,20 +1087,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: "#fff",
+    fontSize: 14,
+  },
+  textArea: {
+    minHeight: 80,
+    textAlignVertical: "top",
   },
 
   btnSolid: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
   },
-  btnSolidText: { fontWeight: "700", color: "#fff" },
+  btnSolidText: { fontWeight: "700", fontSize: 14 },
   btnOutline: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#d1d5db",
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: "#fff",
@@ -1068,7 +1114,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#ef4444",
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
   },
@@ -1079,7 +1125,7 @@ const styles = StyleSheet.create({
     borderColor: "#d1d5db",
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 999,
+    borderRadius: 8,
     backgroundColor: "#fff",
   },
 
@@ -1097,39 +1143,71 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   segmentBtnActive: { backgroundColor: "#111827" },
-  segmentText: { fontWeight: "700", color: "#111827" },
+  segmentText: { fontWeight: "600", color: "#111827", fontSize: 13 },
   segmentTextActive: { color: "#fff" },
 
+  assignMenuContainer: {
+    position: "relative",
+  },
   assignMenu: {
+    position: "absolute",
+    top: 30,
+    right: 0,
+    width: 180,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     borderRadius: 10,
     overflow: "hidden",
     backgroundColor: "#fff",
+    zIndex: 1000,
+    elevation: 5,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
   },
   assignRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 10,
+    backgroundColor: "#fff",
   },
 
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     padding: 16,
+  },
+  modalContainer: {
+    maxHeight: "90%",
+    width: "100%",
+    alignSelf: "center",
   },
 
   serviceRow: {
     borderWidth: 1,
     borderColor: "#eceff3",
     borderRadius: 12,
-    padding: 10,
+    padding: 12,
     backgroundColor: "#fff",
     flexDirection: "row",
     gap: 10,
   },
-  serviceTitle: { fontWeight: "800", color: "#111827" },
-  serviceCost: { fontWeight: "800", color: "#111827" },
+  serviceTitle: { fontWeight: "700", color: "#111827", fontSize: 13 },
+  serviceCost: { fontWeight: "700", color: "#111827", fontSize: 13 },
+
+  actionButtonsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0",
+  },
+  actionButton: {
+    flexShrink: 1,
+  },
 });

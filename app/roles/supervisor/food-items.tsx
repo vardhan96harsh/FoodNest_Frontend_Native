@@ -48,7 +48,7 @@ export default function FoodItems() {
   const [isAdding, setIsAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
-  const [filterType, setFilterType] = useState<"all" | "permanent" | "temporary">("all");
+  const [filterType, setFilterType] = useState<"all" | "permanent">("all");
 
   // form state
   const [name, setName] = useState("");
@@ -195,8 +195,6 @@ export default function FoodItems() {
       let endpoint = "/api/foods";
       if (filterType === "permanent") {
         endpoint = "/api/foods/permanent";
-      } else if (filterType === "temporary") {
-        endpoint = "/api/foods/temporary";
       }
       
       const data = await apiGet<Item[]>(endpoint);
@@ -461,7 +459,7 @@ export default function FoodItems() {
         </Pressable>
       </View>
 
-      {/* Filter Tabs */}
+      {/* Filter Tabs - Only All Items and Permanent */}
       <View style={styles.filterContainer}>
         <Pressable 
           style={[styles.filterTab, filterType === "all" && styles.filterTabActive]}
@@ -477,14 +475,6 @@ export default function FoodItems() {
         >
           <Text style={[styles.filterText, filterType === "permanent" && styles.filterTextActive]}>
             Permanent
-          </Text>
-        </Pressable>
-        <Pressable 
-          style={[styles.filterTab, filterType === "temporary" && styles.filterTabActive]}
-          onPress={() => setFilterType("temporary")}
-        >
-          <Text style={[styles.filterText, filterType === "temporary" && styles.filterTextActive]}>
-            Temporary
           </Text>
         </Pressable>
       </View>

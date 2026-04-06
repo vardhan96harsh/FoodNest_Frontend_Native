@@ -48,16 +48,6 @@ type Battery = {
   lastCharge?: string;
 };
 
-type FoodItem = {
-  _id: string;
-  name: string;
-  price: number;
-  category: string;
-  unit?: string;
-  totalQuantity?: { amount: number; unit: string };
-  imageUrl?: string;
-};
-
 type InventoryItem = {
   foodItem: string;
   name: string;
@@ -65,6 +55,8 @@ type InventoryItem = {
   locked: number;
   available: number;
   price: number;
+  isPermanent?: boolean;
+  source?: 'daily' | 'permanent';
 };
 
 type AssignmentInventoryItem = {
@@ -76,6 +68,7 @@ type AssignmentInventoryItem = {
   quantityAssigned: number;
   quantityRemaining: number;
   quantitySold: number;
+  source?: string;
 };
 
 type Assignment = {
@@ -110,6 +103,8 @@ type FoodPick = {
   quantity: number;
   price: number;
   available: number;
+  isPermanent?: boolean;
+  source?: string;
 };
 
 type TeamResponse = {
@@ -140,10 +135,15 @@ type AvailableItemsResponse = {
     locked: number;
     available: number;
     imageUrl?: string;
+    isPermanent?: boolean;
+    source?: string;
   }>;
   summary: {
     totalItems: number;
     totalAvailable: number;
+    totalValue?: number;
+    dailyCount?: number;
+    permanentCount?: number;
   };
 };
 
@@ -262,6 +262,9 @@ export default function AssignRiderScreen() {
 
   // Modal open
   const [isOpen, setIsOpen] = useState(false);
+  
+  // Edit mode
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
 
   // Selections
   const [selectedRider, setSelectedRider] = useState<Rider | null>(null);
@@ -286,7 +289,6 @@ export default function AssignRiderScreen() {
     try {
       const res = await api.get<AvailableItemsResponse>("/api/supervisor/assignments/available-items");
       if (res?.ok && Array.isArray(res?.items)) {
-        // Transform to match InventoryItem type
         const items = res.items.map((item) => ({
           foodItem: item?.foodItemId || '',
           name: item?.name || 'Unknown',
@@ -294,6 +296,8 @@ export default function AssignRiderScreen() {
           locked: item?.locked || 0,
           available: item?.available || 0,
           price: item?.price || 0,
+          isPermanent: item?.isPermanent || false,
+          source: item?.source || 'daily'
         }));
         setInventory(items);
       } else {
@@ -308,7 +312,6 @@ export default function AssignRiderScreen() {
   // ========== Check Resource Availability ==========
   const checkResourceAvailability = async (): Promise<boolean> => {
     try {
-      // Get fresh team data
       const teamRes = await api.get<TeamResponse>("/api/supervisor/my-team");
       
       if (!teamRes?.ok || !teamRes?.team) {
@@ -318,7 +321,6 @@ export default function AssignRiderScreen() {
 
       const { vehicles = [], batteries = [], riders = [] } = teamRes.team || {};
 
-      // Check if selected resources are still available
       const vehicleStillAvailable = vehicles.some(v => v?._id === selectedVehicle?._id);
       const batteryStillAvailable = batteries.some(b => b?._id === selectedBattery?._id);
       const riderStillAvailable = riders.some(r => r?._id === selectedRider?._id && r?.status !== 'Active');
@@ -351,7 +353,6 @@ export default function AssignRiderScreen() {
     try {
       setLoading(true);
       
-      // Fetch team data (riders, vehicles, routes, batteries)
       const teamRes = await api.get<TeamResponse>("/api/supervisor/my-team");
       
       if (teamRes?.ok && teamRes?.team) {
@@ -361,20 +362,16 @@ export default function AssignRiderScreen() {
         setBatteries(Array.isArray(teamRes.team.batteries) ? teamRes.team.batteries : []);
       }
 
-      // Fetch available items from inventory
       await fetchAvailableItems();
 
-      // Fetch today's assignments
       try {
         const assignmentsRes = await api.get<AssignmentsResponse>("/api/supervisor/assignments/today");
         
-        // Safely process assignments with null checks
         const rawAssignments = assignmentsRes?.assignments || [];
         
         if (Array.isArray(rawAssignments)) {
-          // Filter out invalid assignments and ensure all fields exist
           const validAssignments = rawAssignments
-            .filter(a => a && a._id) // Basic validation
+            .filter(a => a && a._id)
             .map(a => ({
               _id: a._id || '',
               rider: a?.rider ? { 
@@ -402,7 +399,8 @@ export default function AssignRiderScreen() {
                     } : { _id: 'unknown', name: 'Unknown Item', price: 0 },
                     quantityAssigned: item?.quantityAssigned || 0,
                     quantityRemaining: item?.quantityRemaining || 0,
-                    quantitySold: item?.quantitySold || 0
+                    quantitySold: item?.quantitySold || 0,
+                    source: item?.source || 'daily'
                   }))
                 : [],
               date: a?.date || new Date().toISOString(),
@@ -480,6 +478,16 @@ export default function AssignRiderScreen() {
     [selectedFoodItems]
   );
 
+  const permanentCount = useMemo(
+    () => selectedFoodItems.filter(i => i?.isPermanent).length,
+    [selectedFoodItems]
+  );
+
+  const dailyCount = useMemo(
+    () => selectedFoodItems.filter(i => !i?.isPermanent).length,
+    [selectedFoodItems]
+  );
+
   // ========== Actions ==========
   const resetModal = () => {
     setSelectedRider(null);
@@ -489,10 +497,48 @@ export default function AssignRiderScreen() {
     setSelectedFoodItems([]);
     setCurrentFoodItem(null);
     setCurrentQuantity('');
+    setEditingAssignment(null);
   };
 
   const openAssignmentModal = async () => {
     await fetchAvailableItems();
+    setIsOpen(true);
+  };
+
+  const openEditModal = async (assignment: Assignment) => {
+    // Only allow editing pending assignments
+    if (assignment.status !== 'pending') {
+      Alert.alert("Cannot Edit", "Only pending assignments can be edited");
+      return;
+    }
+    
+    setEditingAssignment(assignment);
+    
+    // Find and set the resources
+    const rider = riders.find(r => r._id === assignment.rider?._id);
+    const vehicle = vehicles.find(v => v._id === assignment.vehicle?._id);
+    const battery = batteries.find(b => b._id === assignment.battery?._id);
+    const route = routes.find(r => r._id === assignment.route?._id);
+    
+    setSelectedRider(rider || null);
+    setSelectedVehicle(vehicle || null);
+    setSelectedBattery(battery || null);
+    setSelectedRoute(route || null);
+    
+    // Convert existing inventory items to FoodPick format
+    const existingItems: FoodPick[] = assignment.inventory.map(item => ({
+      foodItemId: item.foodItem._id,
+      name: item.foodItem.name,
+      quantity: item.quantityAssigned,
+      price: item.foodItem.price,
+      available: item.quantityAssigned,
+      isPermanent: item.source === 'permanent',
+      source: item.source
+    }));
+    
+    setSelectedFoodItems(existingItems);
+    
+    // Open the modal
     setIsOpen(true);
   };
 
@@ -527,6 +573,8 @@ export default function AssignRiderScreen() {
         quantity: qty,
         price: currentFoodItem.price || 0,
         available: currentFoodItem.available || 0,
+        isPermanent: currentFoodItem.isPermanent || false,
+        source: currentFoodItem.source || 'daily'
       },
     ]);
 
@@ -604,36 +652,97 @@ export default function AssignRiderScreen() {
     }
   };
 
-  const deleteAssignment = async (assignmentId: string) => {
-    Alert.alert(
-      "Cancel Assignment",
-      "Are you sure you want to cancel this assignment? All resources will be freed and inventory will be unlocked.",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: async () => {
+  const updateAssignment = async () => {
+    if (!canCreate || !editingAssignment) return;
+    
+    const isValid = await validateInventory();
+    if (!isValid) return;
+    
+    const resourcesAvailable = await checkResourceAvailability();
+    if (!resourcesAvailable) return;
+    
+    try {
+      setSaving(true);
+      
+      const updateRes = await api.put(`/api/supervisor/assignments/${editingAssignment._id}`, {
+        riderId: selectedRider!._id,
+        vehicleId: selectedVehicle!._id,
+        batteryId: selectedBattery!._id,
+        items: selectedFoodItems.map(item => ({
+          foodItemId: item.foodItemId,
+          quantity: item.quantity
+        }))
+      });
+      
+      if (updateRes?.ok) {
+        await fetchData();
+        setIsOpen(false);
+        resetModal();
+        Alert.alert('Success', 'Assignment updated successfully');
+      } else {
+        Alert.alert('Error', updateRes?.error || 'Failed to update assignment');
+      }
+    } catch (err: any) {
+      console.error("Update assignment error:", err);
+      Alert.alert('Error', err?.message || 'Failed to update assignment');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+ const deleteAssignment = async (assignmentId: string) => {
+  Alert.alert(
+    "Cancel Assignment",
+    "Are you sure you want to cancel this assignment? All resources will be freed and inventory will be unlocked.",
+    [
+      { text: "No", style: "cancel" },
+      {
+        text: "Yes, Cancel",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setSaving(true);
+            
+            console.log(`[Delete] Attempting to delete assignment: ${assignmentId}`);
+            
+            let res;
+            
+            // Try DELETE method first
             try {
-              setSaving(true);
+              console.log("[Delete] Trying DELETE method...");
+              res = await api.delete(`/api/supervisor/assignments/${assignmentId}`);
+              console.log("[Delete] DELETE response:", res);
+            } catch (deleteError: any) {
+              console.error("[Delete] DELETE failed:", deleteError);
+              console.log("[Delete] Falling back to POST cancel endpoint...");
               
-              const res = await api.delete(`/api/supervisor/assignments/${assignmentId}`);
-              
-              if (res?.ok) {
-                await fetchData();
-                Alert.alert("Success", "Assignment cancelled successfully");
-              }
-            } catch (err: any) {
-              console.error("Delete error:", err);
-              Alert.alert("Error", err?.message || "Failed to cancel assignment");
-            } finally {
-              setSaving(false);
+              // If DELETE fails, try POST to cancel endpoint
+              res = await api.post(`/api/supervisor/assignments/${assignmentId}/cancel`, {
+                reason: "Cancelled by supervisor"
+              });
+              console.log("[Delete] POST cancel response:", res);
             }
+            
+            if (res?.ok) {
+              await fetchData();
+              Alert.alert("Success", "Assignment cancelled successfully");
+            } else {
+              Alert.alert("Error", res?.error || "Failed to cancel assignment");
+            }
+          } catch (err: any) {
+            console.error("[Delete] Final error:", err);
+            Alert.alert(
+              "Error", 
+              err?.message || err?.error || "Failed to cancel assignment. Please try again."
+            );
+          } finally {
+            setSaving(false);
           }
         }
-      ]
-    );
-  };
+      }
+    ]
+  );
+};
 
   const closeAssignment = async (assignmentId: string) => {
     Alert.alert(
@@ -652,6 +761,8 @@ export default function AssignRiderScreen() {
               if (res?.ok) {
                 await fetchData();
                 Alert.alert("Success", "Assignment closed successfully");
+              } else {
+                Alert.alert("Error", res?.error || "Failed to close assignment");
               }
             } catch (err: any) {
               console.error("Close error:", err);
@@ -775,13 +886,15 @@ export default function AssignRiderScreen() {
           </View>
           <View style={styles.statItem}>
             <Text style={styles.statValue}>
-              {Array.isArray(inventory) ? inventory.reduce((sum, i) => sum + (i?.locked || 0), 0) : 0}
+              {Array.isArray(inventory) ? inventory.filter(i => i?.isPermanent).length : 0}
             </Text>
-            <Text style={styles.statLabel}>Locked</Text>
+            <Text style={styles.statLabel}>Permanent Items</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>{Array.isArray(inventory) ? inventory.length : 0}</Text>
-            <Text style={styles.statLabel}>Items</Text>
+            <Text style={styles.statValue}>
+              {Array.isArray(inventory) ? inventory.filter(i => !i?.isPermanent).length : 0}
+            </Text>
+            <Text style={styles.statLabel}>Daily Items</Text>
           </View>
         </View>
 
@@ -790,6 +903,7 @@ export default function AssignRiderScreen() {
             <View key={item?.foodItem || index.toString()} style={styles.chip}>
               <Text style={styles.chipText}>
                 {item?.name || 'Unknown'}: {item?.available || 0}
+                {item?.isPermanent && ' 🔷'}
               </Text>
             </View>
           ))}
@@ -817,7 +931,6 @@ export default function AssignRiderScreen() {
         ) : (
           <View style={{ rowGap: 12 }}>
             {assignments.map((a) => {
-              // Safety check - if assignment is null/undefined, skip
               if (!a || !a._id) return null;
               
               const inventory = Array.isArray(a.inventory) ? a.inventory : [];
@@ -870,16 +983,28 @@ export default function AssignRiderScreen() {
                       )}
                       
                       {a.status === 'pending' && (
-                        <Pressable 
-                          onPress={() => deleteAssignment(a._id)}
-                          style={({ pressed }) => [
-                            styles.iconBtn,
-                            pressed && { opacity: 0.7 },
-                            { padding: 4 }
-                          ]}
-                        >
-                          <Feather name="trash-2" size={16} color="#dc2626" />
-                        </Pressable>
+                        <>
+                          <Pressable 
+                            onPress={() => openEditModal(a)}
+                            style={({ pressed }) => [
+                              styles.iconBtn,
+                              pressed && { opacity: 0.7 },
+                              { padding: 4 }
+                            ]}
+                          >
+                            <Feather name="edit-2" size={16} color="#2563eb" />
+                          </Pressable>
+                          <Pressable 
+                            onPress={() => deleteAssignment(a._id)}
+                            style={({ pressed }) => [
+                              styles.iconBtn,
+                              pressed && { opacity: 0.7 },
+                              { padding: 4 }
+                            ]}
+                          >
+                            <Feather name="trash-2" size={16} color="#dc2626" />
+                          </Pressable>
+                        </>
                       )}
                     </View>
                   </View>
@@ -902,12 +1027,12 @@ export default function AssignRiderScreen() {
                         <Text style={styles.chipText}>
                           {item?.foodItem?.name || 'Unknown'}: {item?.quantityAssigned || 0} 
                           {(item?.quantitySold || 0) > 0 && ` (${item.quantitySold} sold)`}
+                          {item?.source === 'permanent' && ' 🔷'}
                         </Text>
                       </View>
                     ))}
                   </View>
 
-                  {/* Progress for sold items */}
                   {a.status === 'active' && totalSold > 0 && (
                     <View style={{ marginTop: 8 }}>
                       <Text style={styles.subtleSmall}>Sales Progress</Text>
@@ -922,7 +1047,6 @@ export default function AssignRiderScreen() {
                     </View>
                   )}
 
-                  {/* Show cancellation info if cancelled */}
                   {a.status === 'cancelled' && (
                     <View style={{ marginTop: 8, padding: 8, backgroundColor: '#fee2e2', borderRadius: 8 }}>
                       <Text style={{ color: '#dc2626', fontSize: 12 }}>
@@ -932,7 +1056,6 @@ export default function AssignRiderScreen() {
                     </View>
                   )}
 
-                  {/* Show completion info */}
                   {a.status === 'completed' && a.closedAt && (
                     <View style={{ marginTop: 8, padding: 8, backgroundColor: '#f0fdf4', borderRadius: 8 }}>
                       <Text style={{ color: '#16a34a', fontSize: 12 }}>
@@ -947,23 +1070,34 @@ export default function AssignRiderScreen() {
         )}
       </View>
 
-      {/* New Assignment Modal */}
+      {/* New/Edit Assignment Modal */}
       <Modal
         transparent
         animationType='slide'
         visible={isOpen}
-        onRequestClose={() => setIsOpen(false)}
+        onRequestClose={() => {
+          setIsOpen(false);
+          resetModal();
+        }}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setIsOpen(false)} />
+        <Pressable style={styles.modalBackdrop} onPress={() => {
+          setIsOpen(false);
+          resetModal();
+        }} />
         <View style={styles.modalCard}>
           <View style={[styles.rowBetween, { marginBottom: 10 }]}>
             <View>
-              <Text style={styles.modalTitle}>Create Rider Assignment</Text>
+              <Text style={styles.modalTitle}>
+                {editingAssignment ? 'Edit Rider Assignment' : 'Create Rider Assignment'}
+              </Text>
               <Text style={styles.subtleSmall}>
-                Assign with real-time inventory tracking
+                {editingAssignment ? 'Modify assignment details' : 'Assign with real-time inventory tracking'}
               </Text>
             </View>
-            <Pressable onPress={() => setIsOpen(false)}>
+            <Pressable onPress={() => {
+              setIsOpen(false);
+              resetModal();
+            }}>
               <Feather name='x' size={22} />
             </Pressable>
           </View>
@@ -1071,7 +1205,7 @@ export default function AssignRiderScreen() {
                     }
                   >
                     {currentFoodItem
-                      ? `${currentFoodItem.name} (Available: ${currentFoodItem.available})`
+                      ? `${currentFoodItem.name} (Available: ${currentFoodItem.available})${currentFoodItem.isPermanent ? ' 🔷 Permanent' : ' 📦 Daily'}`
                       : 'Select food item'}
                   </Text>
                   <Feather name='chevron-down' size={18} color='#6b7280' />
@@ -1098,6 +1232,7 @@ export default function AssignRiderScreen() {
                           <Text style={{ fontWeight: '600' }}>{fi.name}</Text>
                           <Text style={styles.subtleSmall}>
                             Qty: {fi.quantity} • Price: ₹{fi.price}
+                            {fi.isPermanent ? ' 🔷 Permanent Stock' : ' 📦 Daily Stock'}
                           </Text>
                         </View>
                         <Pressable
@@ -1142,6 +1277,10 @@ export default function AssignRiderScreen() {
                       <Feather name='shopping-bag' size={16} color="#2563eb" />
                       <Text>Items: <Text style={styles.bold}>{selectedFoodItems.length}</Text> items, <Text style={styles.bold}>{totalItems}</Text> total quantity</Text>
                     </View>
+                    <View style={[styles.row, { alignItems: 'center', gap: 8 }]}>
+                      <Feather name='layers' size={16} color="#2563eb" />
+                      <Text>Permanent: <Text style={styles.bold}>{permanentCount}</Text> • Daily: <Text style={styles.bold}>{dailyCount}</Text></Text>
+                    </View>
                   </View>
                 </View>
               )}
@@ -1149,7 +1288,7 @@ export default function AssignRiderScreen() {
             {/* Actions */}
             <View style={styles.actionButtons}>
               <Pressable
-                onPress={createAssignment}
+                onPress={editingAssignment ? updateAssignment : createAssignment}
                 disabled={!canCreate || saving}
                 style={({ pressed }) => [
                   styles.primaryBtn,
@@ -1161,8 +1300,10 @@ export default function AssignRiderScreen() {
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
                   <>
-                    <Feather name='check' size={16} color='#fff' style={{ marginRight: 8 }} />
-                    <Text style={styles.primaryBtnText}>Create Assignment</Text>
+                    <Feather name={editingAssignment ? 'edit-2' : 'check'} size={16} color='#fff' style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryBtnText}>
+                      {editingAssignment ? 'Update Assignment' : 'Create Assignment'}
+                    </Text>
                   </>
                 )}
               </Pressable>
@@ -1189,7 +1330,7 @@ export default function AssignRiderScreen() {
         visible={riderOpen}
         onClose={() => setRiderOpen(false)}
         title='Choose rider'
-        items={availableRiders.filter(r => r)} // Filter out null/undefined
+        items={availableRiders.filter(r => r)}
         renderLeft={(r: Rider) => (
           <>
             <Feather name='user' size={16} color='#111827' />
@@ -1282,7 +1423,12 @@ export default function AssignRiderScreen() {
         renderLeft={(f: InventoryItem) => (
           <>
             <Feather name='box' size={16} color='#111827' />
-            <Text style={{ fontWeight: '600', color: '#111827' }}>{f.name}</Text>
+            <View>
+              <Text style={{ fontWeight: '600', color: '#111827' }}>{f.name}</Text>
+              <Text style={styles.subtleSmall}>
+                {f.isPermanent ? '🔷 Permanent Stock' : '📦 Daily Stock'}
+              </Text>
+            </View>
           </>
         )}
         renderRight={(f: InventoryItem) => (
@@ -1317,7 +1463,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  /* Card */
   card: {
     backgroundColor: '#fff',
     borderRadius: 14,
@@ -1333,7 +1478,6 @@ const styles = StyleSheet.create({
 
   sectionTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
 
-  /* Inventory Stats */
   inventoryStats: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -1347,7 +1491,6 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontWeight: '800', color: '#111827' },
   statLabel: { fontSize: 11, color: '#6b7280', marginTop: 2 },
 
-  /* input-like pressables */
   label: { fontSize: 12, fontWeight: '700', color: '#374151', marginBottom: 6 },
   inputLike: {
     paddingHorizontal: 12,
@@ -1363,7 +1506,6 @@ const styles = StyleSheet.create({
   inputPlaceholder: { color: '#6b7280' },
   inputValue: { color: '#111827', fontWeight: '700' },
 
-  /* qty input */
   qtyInput: {
     height: 44,
     borderWidth: 1,
@@ -1376,7 +1518,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 
-  /* assignment list */
   assignmentCard: {
     borderWidth: 1,
     borderColor: '#eef1f5',
@@ -1399,7 +1540,6 @@ const styles = StyleSheet.create({
   },
   chipText: { color: '#111827', fontSize: 12, fontWeight: '700' },
 
-  /* progress */
   progressTrack: {
     height: 6,
     borderRadius: 999,
@@ -1413,7 +1553,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563eb',
   },
 
-  /* buttons */
   primaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1448,7 +1587,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 
-  /* badge */
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -1457,7 +1595,6 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
 
-  /* modal */
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' },
   modalCard: {
     position: 'absolute',
@@ -1477,7 +1614,6 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
 
-  /* sheet picker */
   sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' },
   sheet: {
     position: 'absolute',
@@ -1515,7 +1651,6 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
 
-  /* helpers */
   grid2: {
     flexDirection: 'row',
     gap: 12,

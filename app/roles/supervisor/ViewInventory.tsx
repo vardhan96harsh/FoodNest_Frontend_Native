@@ -1,4 +1,4 @@
-// screens/ViewInventory.tsx - Complete working version with permanent items support and delete functionality
+// screens/ViewInventory.tsx - Updated with value tracking and improvements
 import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
@@ -32,7 +32,8 @@ type FoodItem = {
   isDiscounted?: boolean;
 };
 
-type SupervisorInventoryItem = {
+type InventoryItem = {
+  id: string;
   foodItem: string;
   name: string;
   price: number;
@@ -44,22 +45,10 @@ type SupervisorInventoryItem = {
   category?: string;
   status?: string;
   isPermanent: boolean;
-  id?: string;
-};
-
-type PermanentStockItem = {
-  foodItem: string;
-  name: string;
-  quantity: number;
-  locked: number;
-  available: number;
-  lowStock?: boolean;
-  unit?: string;
-  category?: string;
-  status?: string;
-  isPermanent: boolean;
-  lastRestocked?: Date;
-  id?: string;
+  notes?: string;
+  lastRestockedAt?: string;
+  totalValue?: number;
+  createdAt?: string;
 };
 
 type PrepRequest = {
@@ -86,6 +75,7 @@ const tone = {
   primary: "#2563eb",
   info: "#0891b2",
   permanent: "#8b5cf6",
+  daily: "#10b981",
 } as const;
 
 // ==================== HELPER FUNCTIONS ====================
@@ -137,18 +127,20 @@ function TotalStat({ label, value, color }: { label: string; value: string; colo
 // ==================== MAIN COMPONENT ====================
 
 export default function ViewInventoryScreen() {
-  const [dailyInventory, setDailyInventory] = useState<SupervisorInventoryItem[]>([]);
-  const [permanentStock, setPermanentStock] = useState<PermanentStockItem[]>([]);
+  const [dailyInventory, setDailyInventory] = useState<InventoryItem[]>([]);
+  const [permanentStock, setPermanentStock] = useState<InventoryItem[]>([]);
   const [inventoryStats, setInventoryStats] = useState({
     totalItems: 0,
     totalQuantity: 0,
     totalLocked: 0,
     totalAvailable: 0,
     lowStockItems: 0,
-    status: "draft",
+    status: "active",
     permanentItems: 0,
     permanentStockValue: 0,
-    dailyItemsValue: 0
+    dailyItemsValue: 0,
+    dailyTotalValue: 0,
+    permanentTotalValue: 0
   });
   
   const [foodItems, setFoodItems] = useState<FoodItem[]>([]);
@@ -162,6 +154,7 @@ export default function ViewInventoryScreen() {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedFood, setSelectedFood] = useState<FoodItem | null>(null);
   const [addQty, setAddQty] = useState("");
+  const [addNotes, setAddNotes] = useState("");
   const [foodPickerOpen, setFoodPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -171,6 +164,12 @@ export default function ViewInventoryScreen() {
   const [selectedRestockFood, setSelectedRestockFood] = useState<FoodItem | null>(null);
   const [restockQty, setRestockQty] = useState("");
   const [restockPickerOpen, setRestockPickerOpen] = useState(false);
+
+  // Edit quantity modal
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [editQty, setEditQty] = useState("");
+  const [editOperation, setEditOperation] = useState<"set" | "add" | "remove">("set");
 
   // Delete confirmation modal
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -188,36 +187,76 @@ export default function ViewInventoryScreen() {
         console.warn("Failed to fetch foods:", err);
       }
 
-      // Fetch daily inventory (temporary items only)
-      let dailyData: any = { inventory: { items: [] } };
+      // Fetch daily inventory
       try {
-        dailyData = await api.get("/api/supervisor-inventory/today");
-        setDailyInventory(dailyData.inventory?.items || []);
-        setInventoryStats(prev => ({
-          ...prev,
-          totalItems: dailyData.inventory?.totalItems || 0,
-          totalQuantity: dailyData.inventory?.totalQuantity || 0,
-          totalLocked: dailyData.inventory?.totalLocked || 0,
-          totalAvailable: dailyData.inventory?.totalAvailable || 0,
-          lowStockItems: dailyData.inventory?.lowStockItems || 0,
-          status: dailyData.inventory?.status || "draft",
-          dailyItemsValue: dailyData.inventory?.totalQuantity || 0
-        }));
+        const response = await api.get("/api/supervisor-inventory/daily");
+        if (response?.ok && response?.inventory?.items) {
+          const formattedItems = response.inventory.items.map((item: any) => ({
+            ...item,
+            id: item.id,
+            totalValue: (item.quantity || 0) * (item.price || 0),
+          }));
+          setDailyInventory(formattedItems);
+          
+          const dailyTotalValue = formattedItems.reduce((sum: number, item: any) => sum + (item.quantity * item.price), 0);
+          
+          setInventoryStats(prev => ({
+            ...prev,
+            totalItems: response.inventory.totalItems || 0,
+            totalQuantity: response.inventory.totalQuantity || 0,
+            totalLocked: response.inventory.totalLocked || 0,
+            totalAvailable: response.inventory.totalAvailable || 0,
+            lowStockItems: response.inventory.lowStockItems || 0,
+            status: response.inventory.status || "active",
+            dailyItemsValue: response.inventory.totalQuantity || 0,
+            dailyTotalValue: dailyTotalValue
+          }));
+        } else {
+          setDailyInventory([]);
+          setInventoryStats(prev => ({
+            ...prev,
+            totalItems: 0,
+            totalQuantity: 0,
+            dailyItemsValue: 0,
+            dailyTotalValue: 0
+          }));
+        }
       } catch (err) {
         console.warn("Failed to fetch daily inventory:", err);
+        setDailyInventory([]);
       }
 
       // Fetch permanent stock
       try {
-        const permanentData = await api.get("/api/supervisor-inventory/permanent-stock");
-        setPermanentStock(permanentData.inventory?.items || []);
-        setInventoryStats(prev => ({
-          ...prev,
-          permanentItems: permanentData.inventory?.totalItems || 0,
-          permanentStockValue: permanentData.inventory?.totalQuantity || 0
-        }));
+        const response = await api.get("/api/supervisor-inventory/permanent");
+        if (response?.ok && response?.inventory?.items) {
+          const formattedItems = response.inventory.items.map((item: any) => ({
+            ...item,
+            id: item.id,
+            totalValue: (item.quantity || 0) * (item.price || 0),
+          }));
+          setPermanentStock(formattedItems);
+          
+          const permanentTotalValue = formattedItems.reduce((sum: number, item: any) => sum + (item.quantity * item.price), 0);
+          
+          setInventoryStats(prev => ({
+            ...prev,
+            permanentItems: response.inventory.totalItems || 0,
+            permanentStockValue: response.inventory.totalQuantity || 0,
+            permanentTotalValue: permanentTotalValue
+          }));
+        } else {
+          setPermanentStock([]);
+          setInventoryStats(prev => ({
+            ...prev,
+            permanentItems: 0,
+            permanentStockValue: 0,
+            permanentTotalValue: 0
+          }));
+        }
       } catch (err) {
         console.warn("Failed to fetch permanent stock:", err);
+        setPermanentStock([]);
       }
 
       // Fetch prep requests
@@ -267,17 +306,18 @@ export default function ViewInventoryScreen() {
 
     try {
       setSaving(true);
-      await api.post("/api/supervisor-inventory/items", {
+      await api.post("/api/supervisor-inventory/daily/items", {
         foodItemId: selectedFood._id,
         quantity: qty,
-        notes: "Added via mobile app",
+        notes: addNotes || "Added via mobile app",
       });
 
       await fetchData();
       setAddModalOpen(false);
       setSelectedFood(null);
       setAddQty("");
-      Alert.alert("Success", "Item added to daily inventory");
+      setAddNotes("");
+      Alert.alert("Success", `${selectedFood.name} added to daily inventory`);
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to add item");
     } finally {
@@ -285,34 +325,7 @@ export default function ViewInventoryScreen() {
     }
   };
 
-  // ===== Delete item from inventory =====
-  const deleteInventoryItem = async () => {
-    if (!itemToDelete) return;
-
-    try {
-      setDeleting(true);
-      
-      if (itemToDelete.type === "daily") {
-        // Delete from daily inventory
-        await api.delete(`/api/supervisor-inventory/daily-items/${itemToDelete.id}`);
-        Alert.alert("Success", "Item removed from daily inventory");
-      } else {
-        // Delete from permanent stock
-        await api.delete(`/api/supervisor-inventory/items/${itemToDelete.id}`);
-        Alert.alert("Success", "Item removed from permanent stock");
-      }
-      
-      await fetchData();
-      setDeleteModalOpen(false);
-      setItemToDelete(null);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to delete item");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // ===== Restock permanent items =====
+  // ===== Add to permanent stock (restock) =====
   const addRestockItem = () => {
     if (!selectedRestockFood) {
       Alert.alert("Error", "Please select a food item");
@@ -357,7 +370,7 @@ export default function ViewInventoryScreen() {
 
     try {
       setSaving(true);
-      await api.post("/api/supervisor-inventory/permanent-stock/restock", {
+      await api.post("/api/supervisor-inventory/permanent/restock", {
         items: formattedItems,
         notes: "Restocked via mobile app"
       });
@@ -377,61 +390,179 @@ export default function ViewInventoryScreen() {
     setRestockItems(restockItems.filter((_, i) => i !== index));
   };
 
-  // ===== Render inventory items with delete button =====
-  const renderInventoryItem = (item: SupervisorInventoryItem | PermanentStockItem, index: number, total: number) => (
-    <View key={item.foodItem}>
-      <View style={styles.listRow}>
-        <View style={{ flex: 1 }}>
-          <View style={[styles.row, { alignItems: "center", gap: 8, flexWrap: "wrap" }]}>
-            <Text style={styles.listLeft}>{item.name}</Text>
-            {item.isPermanent && (
-              <Badge text="Permanent" variant="solid" color={tone.permanent} />
+  // ===== Update inventory item quantity =====
+  const openEditModal = (item: InventoryItem) => {
+    if (!item.id) {
+      Alert.alert("Error", "Cannot edit this item: missing ID");
+      return;
+    }
+    
+    setEditingItem(item);
+    setEditQty("");
+    setEditOperation("set");
+    setEditModalOpen(true);
+  };
+
+  const updateInventoryItem = async () => {
+    if (!editingItem) {
+      Alert.alert("Error", "No item selected");
+      return;
+    }
+
+    const qty = Number(editQty.replace(/[^\d]/g, "")) || 0;
+    
+    if (editOperation !== "set" && qty <= 0) {
+      Alert.alert("Error", "Please enter a valid quantity");
+      return;
+    }
+
+    if (editOperation === "set" && qty < 0) {
+      Alert.alert("Error", "Quantity cannot be negative");
+      return;
+    }
+
+    if (editOperation === "remove" && qty > editingItem.available) {
+      Alert.alert("Error", `Cannot remove ${qty} items. Only ${editingItem.available} available`);
+      return;
+    }
+
+    if (editOperation === "set" && qty < editingItem.locked) {
+      Alert.alert("Error", `Cannot set quantity below locked amount (${editingItem.locked})`);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      
+      const endpoint = editingItem.isPermanent
+        ? `/api/supervisor-inventory/permanent/items/${editingItem.id}`
+        : `/api/supervisor-inventory/daily/items/${editingItem.id}`;
+      
+      await api.put(endpoint, {
+        quantity: qty,
+        operation: editOperation,
+        notes: "Updated via mobile app"
+      });
+      
+      await fetchData();
+      setEditModalOpen(false);
+      setEditingItem(null);
+      setEditQty("");
+      Alert.alert("Success", "Item quantity updated");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Failed to update item");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ===== Delete item from inventory =====
+  const deleteInventoryItem = async () => {
+    if (!itemToDelete) return;
+
+    try {
+      setDeleting(true);
+      
+      const endpoint = itemToDelete.type === "daily"
+        ? `/api/supervisor-inventory/daily/items/${itemToDelete.id}`
+        : `/api/supervisor-inventory/permanent/items/${itemToDelete.id}`;
+      
+      await api.delete(endpoint);
+      
+      Alert.alert("Success", 
+        itemToDelete.type === "daily" 
+          ? "Item removed from daily inventory" 
+          : "Item removed from permanent stock"
+      );
+      
+      await fetchData();
+      setDeleteModalOpen(false);
+      setItemToDelete(null);
+    } catch (err: any) {
+      if (err?.message?.includes("locked")) {
+        Alert.alert("Cannot Delete", "This item has locked stock that needs to be released first");
+      } else {
+        Alert.alert("Error", err?.message || "Failed to delete item");
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // ===== Render inventory items =====
+  const renderInventoryItem = (item: InventoryItem, index: number, total: number) => {
+    const uniqueKey = item.id || item.foodItem || `item-${index}`;
+    const itemTotalValue = (item.quantity || 0) * (item.price || 0);
+    
+    return (
+      <View key={uniqueKey}>
+        <View style={styles.listRow}>
+          <View style={{ flex: 1 }}>
+            <View style={[styles.row, { alignItems: "center", gap: 8, flexWrap: "wrap" }]}>
+              <Text style={styles.listLeft}>{item.name}</Text>
+              {item.isPermanent ? (
+                <Badge text="Permanent" variant="solid" color={tone.permanent} />
+              ) : (
+                <Badge text="Daily" variant="solid" color={tone.daily} />
+              )}
+              {!item.isPermanent && item.lowStock && (
+                <Badge text="Low Stock" variant="solid" color={tone.warning} />
+              )}
+              {item.status === "out_of_stock" && (
+                <Badge text="Out of Stock" variant="solid" color={tone.destructive} />
+              )}
+            </View>
+            <Text style={styles.subtleSmall}>Unit: {item.unit || "piece"} | Price: ₹{item.price}</Text>
+            {item.category && (
+              <Text style={styles.subtleSmall}>Category: {item.category}</Text>
             )}
-            {!item.isPermanent && item.lowStock && (
-              <Badge text="Low Stock" variant="solid" color={tone.warning} />
+            <Text style={[styles.subtleSmall, { color: tone.success, fontWeight: "600", marginTop: 2 }]}>
+              Total Value: ₹{itemTotalValue.toLocaleString()}
+            </Text>
+          </View>
+
+          <View style={{ alignItems: "flex-end", marginRight: 12 }}>
+            <Text style={styles.rightTop}>Stock: {item.quantity}</Text>
+            {item.locked > 0 && (
+              <Text style={[styles.subtleSmall, { color: tone.warning }]}>
+                Locked: {item.locked}
+              </Text>
             )}
-            {!item.isPermanent && item.status === "out_of_stock" && (
-              <Badge text="Out of Stock" variant="solid" color={tone.destructive} />
+            <Text style={[styles.subtleSmall, { color: tone.success }]}>
+              Available: {item.available}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Pressable onPress={() => openEditModal(item)} style={styles.actionBtn}>
+              <Feather name="edit-2" size={16} color={tone.primary} />
+            </Pressable>
+
+            {item.locked === 0 && (
+              <Pressable
+                onPress={() => {
+                  if (!item.id) {
+                    Alert.alert("Error", "Cannot delete this item: missing ID");
+                    return;
+                  }
+                  setItemToDelete({
+                    id: item.id,
+                    name: item.name,
+                    type: item.isPermanent ? "permanent" : "daily"
+                  });
+                  setDeleteModalOpen(true);
+                }}
+                style={styles.actionBtn}
+              >
+                <Feather name="trash-2" size={18} color={tone.destructive} />
+              </Pressable>
             )}
           </View>
-          <Text style={styles.subtleSmall}>Unit: {item.unit || "piece"}</Text>
-          {item.category && (
-            <Text style={styles.subtleSmall}>Category: {item.category}</Text>
-          )}
         </View>
-
-        <View style={{ alignItems: "flex-end", marginRight: 12 }}>
-          <Text style={styles.rightTop}>Stock: {item.quantity}</Text>
-          {item.locked > 0 && (
-            <Text style={[styles.subtleSmall, { color: tone.warning }]}>
-              Locked: {item.locked}
-            </Text>
-          )}
-          <Text style={[styles.subtleSmall, { color: tone.success }]}>
-            Available: {item.available}
-          </Text>
-        </View>
-
-        {/* Delete Button - Only show if no locked items */}
-        {item.locked === 0 && (
-          <Pressable
-            onPress={() => {
-              setItemToDelete({
-                id: item.id || item.foodItem,
-                name: item.name,
-                type: item.isPermanent ? "permanent" : "daily"
-              });
-              setDeleteModalOpen(true);
-            }}
-            style={styles.deleteBtn}
-          >
-            <Feather name="trash-2" size={18} color={tone.destructive} />
-          </Pressable>
-        )}
+        {index < total - 1 && <View style={styles.divider} />}
       </View>
-      {index < total - 1 && <View style={styles.divider} />}
-    </View>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -468,8 +599,14 @@ export default function ViewInventoryScreen() {
 
         <View style={styles.totalsGrid}>
           <TotalStat label="Daily Items" value={String(inventoryStats.totalItems)} />
+          <TotalStat label="Daily Value" value={`₹${inventoryStats.dailyTotalValue.toLocaleString()}`} color={tone.daily} />
           <TotalStat label="Daily Qty" value={String(inventoryStats.dailyItemsValue)} />
+        </View>
+
+        <View style={styles.totalsGrid}>
           <TotalStat label="Permanent Items" value={String(inventoryStats.permanentItems)} />
+          <TotalStat label="Permanent Value" value={`₹${inventoryStats.permanentTotalValue.toLocaleString()}`} color={tone.permanent} />
+          <TotalStat label="Permanent Qty" value={String(inventoryStats.permanentStockValue)} />
         </View>
 
         <View style={styles.totalsGrid}>
@@ -478,9 +615,12 @@ export default function ViewInventoryScreen() {
           <TotalStat label="Low Stock" value={String(inventoryStats.lowStockItems)} color={tone.destructive} />
         </View>
         
-        {/* Permanent Stock Value Row */}
         <View style={[styles.totalsGrid, { borderTopWidth: 1, borderTopColor: "#eef1f5", paddingTop: 12, marginTop: 12 }]}>
-          <TotalStat label="Permanent Stock Qty" value={String(inventoryStats.permanentStockValue)} color={tone.permanent} />
+          <TotalStat 
+            label="Total Inventory Value" 
+            value={`₹${(inventoryStats.dailyTotalValue + inventoryStats.permanentTotalValue).toLocaleString()}`} 
+            color={tone.primary} 
+          />
           <TotalStat label="Total Items" value={String(inventoryStats.totalItems + inventoryStats.permanentItems)} />
           <TotalStat label="Total Stock" value={String(inventoryStats.dailyItemsValue + inventoryStats.permanentStockValue)} />
         </View>
@@ -513,12 +653,10 @@ export default function ViewInventoryScreen() {
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.sectionTitle}>Daily Inventory Items</Text>
-            {inventoryStats.status === "draft" && (
-              <Pressable style={styles.iconBtn} onPress={() => setAddModalOpen(true)}>
-                <Feather name="plus" size={18} color={tone.primary} />
-                <Text style={{ color: tone.primary, marginLeft: 4 }}>Add</Text>
-              </Pressable>
-            )}
+            <Pressable style={styles.iconBtn} onPress={() => setAddModalOpen(true)}>
+              <Feather name="plus" size={18} color={tone.primary} />
+              <Text style={{ color: tone.primary, marginLeft: 4 }}>Add Item</Text>
+            </Pressable>
           </View>
           <Text style={styles.subtle}>Temporary items for today's service</Text>
 
@@ -526,11 +664,9 @@ export default function ViewInventoryScreen() {
             <View style={styles.emptyBox}>
               <Feather name="package" size={40} color="#d1d5db" />
               <Text style={[styles.subtle, { marginTop: 8 }]}>No items in daily inventory</Text>
-              {inventoryStats.status === "draft" && (
-                <Pressable style={[styles.ghostBtn, { marginTop: 12 }]} onPress={() => setAddModalOpen(true)}>
-                  <Text style={styles.ghostBtnText}>Add your first item</Text>
-                </Pressable>
-              )}
+              <Pressable style={[styles.ghostBtn, { marginTop: 12 }]} onPress={() => setAddModalOpen(true)}>
+                <Text style={styles.ghostBtnText}>Add your first item</Text>
+              </Pressable>
             </View>
           ) : (
             <View style={styles.listWrap}>
@@ -550,7 +686,7 @@ export default function ViewInventoryScreen() {
               <Text style={{ color: tone.success, marginLeft: 4 }}>Restock</Text>
             </Pressable>
           </View>
-          <Text style={styles.subtle}>Bulk stock items</Text>
+          <Text style={styles.subtle}>Bulk stock items (auto-copied to daily)</Text>
 
           {permanentStock.length === 0 ? (
             <View style={styles.emptyBox}>
@@ -592,7 +728,6 @@ export default function ViewInventoryScreen() {
                         Qty: {req.quantityToPrepare || 1}
                       </Text>
                     </View>
-
                     <Badge text={uiStatus} variant="solid" color={statusColor} />
                   </View>
                   {idx < Math.min(prepRequests.length, 5) - 1 && <View style={styles.divider} />}
@@ -602,6 +737,8 @@ export default function ViewInventoryScreen() {
           </View>
         </View>
       )}
+
+      {/* ==================== MODALS ==================== */}
 
       {/* Add to Daily Inventory Modal */}
       <Modal transparent animationType="slide" visible={addModalOpen} onRequestClose={() => setAddModalOpen(false)}>
@@ -616,13 +753,14 @@ export default function ViewInventoryScreen() {
 
           <Pressable style={styles.inputLike} onPress={() => setFoodPickerOpen(true)}>
             <Text style={selectedFood ? styles.inputValue : styles.inputPlaceholder}>
-              {selectedFood ? selectedFood.name : "Select food item (temporary only)"}
+              {selectedFood ? `${selectedFood.name} - ₹${selectedFood.price}` : "Select food item (temporary only)"}
             </Text>
             <Feather name="chevron-down" size={18} color="#6b7280" />
           </Pressable>
 
           <View style={{ height: 12 }} />
 
+          <Text style={styles.label}>Quantity</Text>
           <TextInput
             style={styles.qtyInput}
             placeholder="Enter quantity"
@@ -630,6 +768,23 @@ export default function ViewInventoryScreen() {
             value={addQty}
             onChangeText={(t) => setAddQty(t.replace(/[^\d]/g, ""))}
           />
+
+          <Text style={styles.label}>Notes (Optional)</Text>
+          <TextInput
+            style={styles.notesInput}
+            placeholder="Add notes about this item"
+            value={addNotes}
+            onChangeText={setAddNotes}
+            multiline
+          />
+
+          {selectedFood && addQty && (
+            <View style={styles.pricePreview}>
+              <Text style={styles.pricePreviewText}>
+                Total Value: ₹{(Number(addQty) * selectedFood.price).toLocaleString()}
+              </Text>
+            </View>
+          )}
 
           <View style={{ height: 14 }} />
 
@@ -644,6 +799,7 @@ export default function ViewInventoryScreen() {
                 setAddModalOpen(false);
                 setSelectedFood(null);
                 setAddQty("");
+                setAddNotes("");
               }}
             >
               <Text style={styles.ghostBtnText}>Cancel</Text>
@@ -663,33 +819,35 @@ export default function ViewInventoryScreen() {
             </Pressable>
           </View>
 
-          {/* Restock Items List */}
           {restockItems.length > 0 && (
             <View style={styles.restockList}>
               <Text style={styles.label}>Items to Restock:</Text>
               {restockItems.map((item, idx) => {
                 const food = foodItems.find(f => f._id === item.foodItemId);
                 return (
-                  <View key={idx} style={styles.restockItemRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.listLeft}>{food?.name || "Unknown"}</Text>
-                      <Text style={styles.subtleSmall}>Qty: {item.quantity}</Text>
+                  <View key={`restock-${idx}-${item.foodItemId}`}>
+                    <View style={styles.restockItemRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.listLeft}>{food?.name || "Unknown"}</Text>
+                        <Text style={styles.subtleSmall}>Qty: {item.quantity}</Text>
+                        <Text style={styles.subtleSmall}>Value: ₹{(Number(item.quantity) * (food?.price || 0)).toLocaleString()}</Text>
+                      </View>
+                      <Pressable onPress={() => removeRestockItem(idx)}>
+                        <Feather name="trash-2" size={18} color={tone.destructive} />
+                      </Pressable>
                     </View>
-                    <Pressable onPress={() => removeRestockItem(idx)}>
-                      <Feather name="trash-2" size={18} color={tone.destructive} />
-                    </Pressable>
+                    {idx < restockItems.length - 1 && <View style={styles.divider} />}
                   </View>
                 );
               })}
             </View>
           )}
 
-          {/* Add Restock Item Form */}
           <View style={styles.restockForm}>
             <Text style={styles.label}>Add Item to Restock:</Text>
             <Pressable style={styles.inputLike} onPress={() => setRestockPickerOpen(true)}>
               <Text style={selectedRestockFood ? styles.inputValue : styles.inputPlaceholder}>
-                {selectedRestockFood ? selectedRestockFood.name : "Select permanent item"}
+                {selectedRestockFood ? `${selectedRestockFood.name} - ₹${selectedRestockFood.price}` : "Select permanent item"}
               </Text>
               <Feather name="chevron-down" size={18} color="#6b7280" />
             </Pressable>
@@ -731,6 +889,80 @@ export default function ViewInventoryScreen() {
         </View>
       </Modal>
 
+      {/* Edit Quantity Modal */}
+      <Modal transparent animationType="fade" visible={editModalOpen} onRequestClose={() => setEditModalOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setEditModalOpen(false)} />
+        <View style={styles.confirmModal}>
+          <View style={styles.confirmModalHeader}>
+            <Feather name="edit-2" size={24} color={tone.primary} />
+            <Text style={styles.confirmModalTitle}>Update Quantity</Text>
+          </View>
+          
+          <Text style={styles.confirmModalText}>Item: {editingItem?.name}</Text>
+          <Text style={styles.confirmModalText}>Current Stock: {editingItem?.quantity}</Text>
+          <Text style={styles.confirmModalText}>Current Value: ₹{((editingItem?.quantity || 0) * (editingItem?.price || 0)).toLocaleString()}</Text>
+          <Text style={styles.confirmModalText}>Locked: {editingItem?.locked || 0}</Text>
+          <Text style={styles.confirmModalText}>Available: {editingItem?.available || 0}</Text>
+
+          <View style={styles.editOperationRow}>
+            <Pressable
+              style={[styles.operationBtn, editOperation === "set" && styles.operationBtnActive]}
+              onPress={() => setEditOperation("set")}
+            >
+              <Text style={[styles.operationBtnText, editOperation === "set" && styles.operationBtnTextActive]}>Set</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.operationBtn, editOperation === "add" && styles.operationBtnActive]}
+              onPress={() => setEditOperation("add")}
+            >
+              <Text style={[styles.operationBtnText, editOperation === "add" && styles.operationBtnTextActive]}>Add</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.operationBtn, editOperation === "remove" && styles.operationBtnActive]}
+              onPress={() => setEditOperation("remove")}
+            >
+              <Text style={[styles.operationBtnText, editOperation === "remove" && styles.operationBtnTextActive]}>Remove</Text>
+            </Pressable>
+          </View>
+
+          <TextInput
+            style={styles.qtyInput}
+            placeholder={`Enter quantity to ${editOperation}`}
+            keyboardType="number-pad"
+            value={editQty}
+            onChangeText={(t) => setEditQty(t.replace(/[^\d]/g, ""))}
+          />
+
+          {editingItem && editQty && (
+            <View style={styles.pricePreview}>
+              <Text style={styles.pricePreviewText}>
+                New Value: ₹{(Number(editQty) * editingItem.price).toLocaleString()}
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.confirmModalButtons}>
+            <Pressable
+              style={[styles.confirmModalBtn, styles.confirmModalCancelBtn]}
+              onPress={() => {
+                setEditModalOpen(false);
+                setEditingItem(null);
+                setEditQty("");
+              }}
+            >
+              <Text style={styles.confirmModalCancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.confirmModalBtn, styles.confirmModalDeleteBtn, { backgroundColor: tone.primary }]}
+              onPress={updateInventoryItem}
+              disabled={saving}
+            >
+              {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmModalDeleteText}>Update</Text>}
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
       {/* Delete Confirmation Modal */}
       <Modal transparent animationType="fade" visible={deleteModalOpen} onRequestClose={() => setDeleteModalOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setDeleteModalOpen(false)} />
@@ -759,11 +991,7 @@ export default function ViewInventoryScreen() {
               onPress={deleteInventoryItem}
               disabled={deleting}
             >
-              {deleting ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.confirmModalDeleteText}>Delete</Text>
-              )}
+              {deleting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmModalDeleteText}>Delete</Text>}
             </Pressable>
           </View>
         </View>
@@ -796,6 +1024,11 @@ export default function ViewInventoryScreen() {
                 <Text style={styles.subtleSmall}>₹{item.price}</Text>
               </Pressable>
             ))}
+            {foodItems.filter(f => f.available && !f.isPermanent).length === 0 && (
+              <View style={styles.emptyBox}>
+                <Text style={styles.subtle}>No temporary food items available</Text>
+              </View>
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -811,24 +1044,28 @@ export default function ViewInventoryScreen() {
             </Pressable>
           </View>
           <ScrollView>
-            {foodItems.filter(f => f.available && f.isPermanent).map((item) => (
-              <Pressable
-                key={item._id}
-                style={styles.optionRow}
-                onPress={() => {
-                  setSelectedRestockFood(item);
-                  setRestockPickerOpen(false);
-                }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: "600", color: "#111827" }}>{item.name}</Text>
-                  <Text style={styles.subtleSmall}>Category: {item.category}</Text>
-                </View>
-                <Text style={styles.subtleSmall}>
-                  Current Stock: {permanentStock.find(s => s.foodItem === item._id)?.quantity || 0}
-                </Text>
-              </Pressable>
-            ))}
+            {foodItems.filter(f => f.available && f.isPermanent).map((item) => {
+              const currentStock = permanentStock.find(s => s.foodItem === item._id);
+              return (
+                <Pressable
+                  key={item._id}
+                  style={styles.optionRow}
+                  onPress={() => {
+                    setSelectedRestockFood(item);
+                    setRestockPickerOpen(false);
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: "600", color: "#111827" }}>{item.name}</Text>
+                    <Text style={styles.subtleSmall}>Category: {item.category}</Text>
+                    <Text style={styles.subtleSmall}>Price: ₹{item.price}</Text>
+                  </View>
+                  <Text style={styles.subtleSmall}>
+                    Current: {currentStock?.quantity || 0} {item.unit || "units"}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </ScrollView>
         </View>
       </Modal>
@@ -845,13 +1082,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-
   h1: { fontSize: 22, fontWeight: "800", color: "#111827" },
   subtle: { color: "#6b7280" },
   subtleSmall: { color: "#6b7280", fontSize: 12 },
-
   row: { flexDirection: "row" },
-
   card: {
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -864,16 +1098,13 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 2,
   },
-
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 4,
   },
-
   sectionTitle: { fontSize: 16, fontWeight: "800", color: "#111827" },
-
   listWrap: { borderWidth: 1, borderColor: "#eef1f5", borderRadius: 12, overflow: "hidden" },
   listRow: {
     paddingHorizontal: 12,
@@ -881,11 +1112,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
   },
   listLeft: { fontWeight: "700", color: "#111827" },
   rightTop: { fontSize: 12, fontWeight: "700", color: "#111827" },
   divider: { height: 1, backgroundColor: "#eef1f5" },
-
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -893,7 +1124,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignSelf: "flex-start",
   },
-
   totalsGrid: {
     flexDirection: "row",
     gap: 12,
@@ -904,28 +1134,11 @@ const styles = StyleSheet.create({
   },
   totalLabel: { fontSize: 12, color: "#6b7280" },
   totalValue: { fontSize: 18, fontWeight: "800", color: "#111827", marginTop: 2 },
-
-  addBtn: {
-    backgroundColor: "#2563eb",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  addBtnText: {
-    color: "#fff",
-    fontWeight: "700",
-  },
-
   emptyBox: {
     paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
   },
-
-  // Tabs
   tabContainer: {
     flexDirection: "row",
     gap: 8,
@@ -956,20 +1169,16 @@ const styles = StyleSheet.create({
     color: "#2563eb",
     fontWeight: "600",
   },
-
   iconBtn: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-
-  deleteBtn: {
+  actionBtn: {
     padding: 8,
-    marginLeft: 8,
+    marginLeft: 4,
   },
-
-  // Modal styles
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
   modalCard: {
     position: "absolute",
@@ -992,7 +1201,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#111827",
   },
-
   inputLike: {
     paddingHorizontal: 12,
     paddingVertical: 12,
@@ -1006,7 +1214,37 @@ const styles = StyleSheet.create({
   },
   inputPlaceholder: { color: "#6b7280" },
   inputValue: { color: "#111827", fontWeight: "700" },
-
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  notesInput: {
+    minHeight: 80,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#111827",
+    backgroundColor: "#fff",
+    textAlignVertical: "top",
+  },
+  pricePreview: {
+    backgroundColor: "#2563eb10",
+    padding: 12,
+    borderRadius: 10,
+    marginTop: 12,
+    alignItems: "center",
+  },
+  pricePreviewText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#2563eb",
+  },
   qtyInput: {
     height: 44,
     borderWidth: 1,
@@ -1017,7 +1255,6 @@ const styles = StyleSheet.create({
     color: "#111827",
     backgroundColor: "#fff",
   },
-
   primaryBtn: {
     alignItems: "center",
     justifyContent: "center",
@@ -1029,7 +1266,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "800",
   },
-
   ghostBtn: {
     alignItems: "center",
     justifyContent: "center",
@@ -1043,13 +1279,11 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontWeight: "800",
   },
-
-  // Confirmation Modal
   confirmModal: {
     position: "absolute",
     left: 32,
     right: 32,
-    top: "40%",
+    top: "30%",
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 20,
@@ -1078,12 +1312,13 @@ const styles = StyleSheet.create({
   },
   confirmModalWarning: {
     fontSize: 12,
-    color: tone.destructive,
+    color: "#dc2626",
     marginBottom: 20,
   },
   confirmModalButtons: {
     flexDirection: "row",
     gap: 12,
+    marginTop: 16,
   },
   confirmModalBtn: {
     flex: 1,
@@ -1099,13 +1334,35 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   confirmModalDeleteBtn: {
-    backgroundColor: tone.destructive,
+    backgroundColor: "#dc2626",
   },
   confirmModalDeleteText: {
     color: "#fff",
     fontWeight: "600",
   },
-
+  editOperationRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginVertical: 12,
+  },
+  operationBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+  },
+  operationBtnActive: {
+    backgroundColor: "#2563eb",
+  },
+  operationBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  operationBtnTextActive: {
+    color: "#fff",
+  },
   sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.25)" },
   sheet: {
     position: "absolute",
@@ -1137,14 +1394,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-
-  // Restock specific styles
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: 8,
-  },
   restockList: {
     marginBottom: 16,
     maxHeight: 200,
@@ -1154,8 +1403,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eef1f5",
   },
   restockForm: {
     marginBottom: 16,

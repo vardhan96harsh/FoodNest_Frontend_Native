@@ -1,5 +1,5 @@
 // screens/MyRoute.tsx
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   ScrollView,
   View,
@@ -15,8 +15,6 @@ import {
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
-import { getAuthState, getUser, getToken, debugStorage } from '@/lib/authStore';
-import * as Location from 'expo-location';
 
 /* ---------- Types ---------- */
 type FoodItem = {
@@ -254,7 +252,6 @@ function StopSaleModal({
 }) {
   const [sales, setSales] = useState<Array<{ foodItemId: string; quantity: string }>>([]);
   const [loading, setLoading] = useState(false);
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   React.useEffect(() => {
     if (visible && inventory?.length > 0) {
@@ -262,17 +259,6 @@ function StopSaleModal({
         foodItemId: item.foodItem?._id || '',
         quantity: '0'
       })));
-      
-      (async () => {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({});
-          setLocation({
-            lat: loc.coords.latitude,
-            lng: loc.coords.longitude
-          });
-        }
-      })();
     }
   }, [visible, inventory]);
 
@@ -316,9 +302,7 @@ function StopSaleModal({
           assignmentId,
           foodItemId: sale.foodItemId,
           qty: sale.quantity,
-          stopId: stop._id,
-          lat: location?.lat,
-          lng: location?.lng
+          stopId: stop._id
         });
       }
       
@@ -327,7 +311,7 @@ function StopSaleModal({
       onClose();
     } catch (error: any) {
       console.error('Sales error:', error);
-      Alert.alert('Error', error?.message || 'Failed to record sales');
+      Alert.alert('Error', error?.response?.data?.error || error?.message || 'Failed to record sales');
     } finally {
       setLoading(false);
     }
@@ -390,7 +374,7 @@ function StopSaleModal({
   );
 }
 
-// Completion Summary Modal - ADD THIS NEW COMPONENT
+// Completion Summary Modal
 function CompletionSummaryModal({ 
   visible, 
   onClose, 
@@ -490,39 +474,6 @@ export default function MyRouteScreen() {
   const [acceptModalVisible, setAcceptModalVisible] = useState(false);
   const [acceptLoading, setAcceptLoading] = useState(false);
   const [completionModalVisible, setCompletionModalVisible] = useState(false);
-  const locationIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const startLocationTracking = useCallback(async (assignmentId: string) => {
-    if (locationIntervalRef.current) {
-      clearInterval(locationIntervalRef.current);
-    }
-    
-    const interval = setInterval(async () => {
-      try {
-        const { status } = await Location.getForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({});
-          await api.post('/api/rider/location', {
-            assignmentId,
-            lat: loc.coords.latitude,
-            lng: loc.coords.longitude
-          }).catch(err => console.error('Location update error:', err));
-        }
-      } catch (err) {
-        console.error('Location error:', err);
-      }
-    }, 30000);
-    
-    locationIntervalRef.current = interval;
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (locationIntervalRef.current) {
-        clearInterval(locationIntervalRef.current);
-      }
-    };
-  }, []);
 
   const fetchAssignment = useCallback(async () => {
     try {
@@ -530,18 +481,21 @@ export default function MyRouteScreen() {
       console.log("Fetching assignment for today...");
       const response = await api.get<ApiResponse>('/api/rider/assignments/today');
       
+      console.log("📦 Response:", response);
+      
       if (response.ok && response.assignment) {
         setAssignment(response.assignment);
         console.log("✅ Assignment loaded:", response.assignment.route?.name);
+        console.log("📊 Status:", response.assignment.status);
+        console.log("⏰ StartTime:", response.assignment.startTime);
         
+        // Show accept modal only if status is pending
         if (response.assignment.status === 'pending') {
+          console.log("🔔 Showing accept modal");
           setAcceptModalVisible(true);
         }
-        
-        if (response.assignment.status === 'active' && response.assignment._id) {
-          startLocationTracking(response.assignment._id);
-        }
       } else {
+        console.log("❌ No assignment found");
         setAssignment(null);
       }
     } catch (err: any) {
@@ -552,7 +506,7 @@ export default function MyRouteScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [startLocationTracking]);
+  }, []);
 
   useEffect(() => {
     fetchAssignment();
@@ -568,22 +522,23 @@ export default function MyRouteScreen() {
     
     setAcceptLoading(true);
     try {
+      console.log("📝 Accepting assignment:", assignment._id);
       const res = await api.post(`/api/rider/assignments/${assignment._id}/accept`);
       
+      console.log("✅ Accept response:", res);
+      
       if (res.ok) {
-        await fetchAssignment();
+        // Close modal first
         setAcceptModalVisible(false);
-        Alert.alert('Success', 'Assignment accepted! You can now start your route.');
-        
-        if (assignment._id) {
-          startLocationTracking(assignment._id);
-        }
+        // Refresh to get updated assignment
+        await fetchAssignment();
+        Alert.alert('Success', 'Assignment accepted! Click "Start Route" to begin.');
       } else {
-        Alert.alert('Error', res.message || 'Failed to accept assignment');
+        Alert.alert('Error', res.message || res.error || 'Failed to accept assignment');
       }
     } catch (error: any) {
       console.error('Accept assignment error:', error);
-      Alert.alert('Error', error?.message || 'Failed to accept assignment');
+      Alert.alert('Error', error?.response?.data?.error || error?.message || 'Failed to accept assignment');
     } finally {
       setAcceptLoading(false);
     }
@@ -594,19 +549,22 @@ export default function MyRouteScreen() {
     
     try {
       setSaving(true);
-      const currentLocation = await Location.getCurrentPositionAsync({});
+      console.log("📍 Arriving at stop:", stopId);
       const res = await api.post(`/api/rider/stops/${stopId}/arrive`, {
-        assignmentId: assignment._id,
-        lat: currentLocation.coords.latitude,
-        lng: currentLocation.coords.longitude
+        assignmentId: assignment._id
       });
+      
+      console.log("✅ Arrive response:", res);
       
       if (res.ok) {
         await fetchAssignment();
-        Alert.alert('Success', 'Arrived at stop');
+        Alert.alert('Success', `Arrived at ${res.data.stop?.stopName || 'stop'}. You can now record sales.`);
+      } else {
+        Alert.alert('Error', res.message || 'Failed to mark arrival');
       }
     } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to mark arrival');
+      console.error('Arrive error:', error);
+      Alert.alert('Error', error?.response?.data?.error || error?.message || 'Failed to mark arrival');
     } finally {
       setSaving(false);
     }
@@ -615,35 +573,49 @@ export default function MyRouteScreen() {
   const handleCompleteStop = async (stopId: string) => {
     if (!assignment?._id) return;
 
+    const currentStop = assignment.stops.find(s => s._id === stopId);
+    const hasSales = currentStop?.sales && currentStop.sales.totalItems > 0;
+    
+    const message = hasSales 
+      ? `Stop has ${currentStop?.sales?.totalItems} items sold (₹${currentStop?.sales?.totalRevenue?.toFixed(2)}). Complete this stop?`
+      : 'No sales recorded at this stop. Complete anyway?';
+
     Alert.alert(
       'Complete Stop',
-      'Have you recorded all sales for this stop?',
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Yes, Complete',
+          text: 'Complete Stop',
           onPress: async () => {
             try {
               setSaving(true);
-              const currentLocation = await Location.getCurrentPositionAsync({});
+              console.log("✅ Completing stop:", stopId);
               const res = await api.post(`/api/rider/stops/${stopId}/complete`, {
-                assignmentId: assignment._id,
-                lat: currentLocation.coords.latitude,
-                lng: currentLocation.coords.longitude
+                assignmentId: assignment._id
               });
+              
+              console.log("✅ Complete response:", res);
               
               if (res.ok) {
                 await fetchAssignment();
                 
-                // Check if route was completed
-                if (res.data.routeCompleted) {
+                if (res.data.allStopsCompleted) {
                   setCompletionModalVisible(true);
+                } else if (res.data.nextStop) {
+                  Alert.alert(
+                    'Stop Completed!', 
+                    `Next stop: ${res.data.nextStop.stopName}\nClick "Arrive at Stop" when you reach it.`
+                  );
                 } else {
                   Alert.alert('Success', 'Stop marked as complete');
                 }
+              } else {
+                Alert.alert('Error', res.message || 'Failed to complete stop');
               }
             } catch (error: any) {
-              Alert.alert('Error', error?.message || 'Failed to complete stop');
+              console.error('Complete stop error:', error);
+              Alert.alert('Error', error?.response?.data?.error || error?.message || 'Failed to complete stop');
             } finally {
               setSaving(false);
             }
@@ -658,27 +630,28 @@ export default function MyRouteScreen() {
 
     Alert.alert(
       'Start Route',
-      'Are you ready to start your route? Location tracking will begin.',
+      'Ready to start your route? You will need to manually arrive at each stop.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Start',
+          text: 'Start Route',
           onPress: async () => {
             try {
               setSaving(true);
-              const currentLocation = await Location.getCurrentPositionAsync({});
-              const res = await api.post(`/api/rider/assignments/${assignment._id}/start`, {
-                lat: currentLocation.coords.latitude,
-                lng: currentLocation.coords.longitude
-              });
+              console.log("🚀 Starting assignment:", assignment._id);
+              const res = await api.post(`/api/rider/assignments/${assignment._id}/start`, {});
+              
+              console.log("✅ Start response:", res);
               
               if (res.ok) {
                 await fetchAssignment();
-                Alert.alert('Success', 'Route started!');
-                startLocationTracking(assignment._id);
+                Alert.alert('Success', 'Route started! Click "Arrive at Stop" on the first stop to begin.');
+              } else {
+                Alert.alert('Error', res.message || 'Failed to start route');
               }
             } catch (error: any) {
-              Alert.alert('Error', error?.message || 'Failed to start route');
+              console.error('Start error:', error);
+              Alert.alert('Error', error?.response?.data?.error || error?.message || 'Failed to start route');
             } finally {
               setSaving(false);
             }
@@ -793,8 +766,8 @@ export default function MyRouteScreen() {
               </Text>
             </View>
             <Badge
-              text={assignment.status === 'active' ? 'Active' : 'Pending'}
-              color={assignment.status === 'active' ? tone.success : tone.warning}
+              text={assignment.status === 'active' ? 'Active' : assignment.status === 'pending' ? 'Pending' : 'Completed'}
+              color={assignment.status === 'active' ? tone.success : assignment.status === 'pending' ? tone.warning : tone.gray}
               solid
             />
           </View>
@@ -807,6 +780,27 @@ export default function MyRouteScreen() {
               </Text>
             </View>
             <ProgressBar value={progressPct} />
+          </View>
+
+          {/* Status Indicator */}
+          <View style={styles.statusIndicator}>
+            <View style={[styles.statusDot, { 
+              backgroundColor: assignment.status === 'pending' ? tone.warning :
+                               !assignment.startTime ? tone.warning : 
+                               assignment.status === 'completed' ? tone.success : tone.primary 
+            }]} />
+            <Text style={styles.statusText}>
+              {assignment.status === 'pending' ? 'Awaiting Acceptance' :
+               !assignment.startTime ? 'Ready to Start' : 
+               assignment.status === 'completed' ? 'Completed' : 
+               'In Progress'}
+            </Text>
+            {assignment.status === 'pending' && (
+              <Text style={styles.statusHint}>Click "Accept Assignment" to begin</Text>
+            )}
+            {assignment.status === 'active' && !assignment.startTime && (
+              <Text style={styles.statusHint}>Click "Start Route" to begin</Text>
+            )}
           </View>
 
           {(assignment.vehicle || assignment.battery) && (
@@ -826,13 +820,35 @@ export default function MyRouteScreen() {
             </View>
           )}
 
+          {/* Accept Button - Show when assignment is pending */}
+          {assignment.status === 'pending' && (
+            <Pressable 
+              style={[styles.primaryBtn, { marginTop: 12, backgroundColor: tone.success }]} 
+              onPress={handleAcceptAssignment}
+              disabled={acceptLoading}
+            >
+              {acceptLoading ? <ActivityIndicator color="#fff" /> : (
+                <>
+                  <Feather name="check-circle" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnText}>Accept Assignment</Text>
+                </>
+              )}
+            </Pressable>
+          )}
+
+          {/* Start Route Button - Show when assignment is active but not started */}
           {assignment.status === 'active' && !assignment.startTime && (
             <Pressable 
-              style={[styles.primaryBtn, { marginTop: 12 }]} 
+              style={[styles.primaryBtn, { marginTop: 12, backgroundColor: tone.success }]} 
               onPress={handleStartAssignment}
               disabled={saving}
             >
-              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Start Route</Text>}
+              {saving ? <ActivityIndicator color="#fff" /> : (
+                <>
+                  <Feather name="play" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnText}>Start Route</Text>
+                </>
+              )}
             </Pressable>
           )}
         </View>
@@ -895,6 +911,9 @@ export default function MyRouteScreen() {
               const isCompleted = stop?.status === 'completed';
               const isInProgress = stop?.status === 'in-progress';
               const isPending = stop?.status === 'pending';
+              
+              // Determine if this stop is the next one to visit
+              const isNextStop = isPending && index === completedStops && !inProgressStop;
 
               return (
                 <View
@@ -910,9 +929,9 @@ export default function MyRouteScreen() {
                         <Text style={styles.stopName}>
                           {`${index + 1}. ${stop?.stopName || 'Unknown Stop'}`}
                         </Text>
-                        {isInProgress && <Badge text="Current" color={tone.primary} solid />}
+                        {isInProgress && <Badge text="In Progress" color={tone.primary} solid />}
                         {isCompleted && <Badge text="Completed" color={tone.success} solid />}
-                        {isPending && !isInProgress && <Badge text="Upcoming" color={tone.gray} solid={false} />}
+                        {isPending && !isInProgress && <Badge text="Pending" color={tone.gray} solid={false} />}
                       </View>
                       {stop?.address ? <Text style={styles.subtleSmall}>{stop.address}</Text> : null}
                     </View>
@@ -973,13 +992,19 @@ export default function MyRouteScreen() {
                     </View>
                   )}
 
-                  {isPending && index === completedStops && !inProgressStop && assignment.status === 'active' && (
+                  {/* Show Arrive button for the next pending stop only if route is started */}
+                  {isNextStop && assignment.startTime && (
                     <Pressable
                       style={[styles.primaryBtn, { marginTop: 12 }]}
                       onPress={() => handleArriveAtStop(stop._id)}
+                      disabled={saving}
                     >
-                      <Feather name="navigation" size={16} color="#fff" />
-                      <Text style={styles.primaryBtnText}>Arrive at Stop</Text>
+                      {saving ? <ActivityIndicator color="#fff" size="small" /> : (
+                        <>
+                          <Feather name="navigation" size={16} color="#fff" />
+                          <Text style={styles.primaryBtnText}>Arrive at Stop</Text>
+                        </>
+                      )}
                     </Pressable>
                   )}
                 </View>
@@ -1130,6 +1155,31 @@ const styles = StyleSheet.create({
 
   stopName: { fontWeight: '700', fontSize: 15, color: '#111827' },
   currentStopCard: { borderColor: '#2563eb', borderWidth: 2 },
+
+  statusIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#eef1f5',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  statusHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginLeft: 'auto',
+  },
 
   vehicleInfo: {
     flexDirection: 'row',
@@ -1375,7 +1425,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
 
-  // Completion Modal Styles - ADD THESE
+  // Completion Modal Styles
   completionModalCard: {
     backgroundColor: '#fff',
     borderRadius: 24,
