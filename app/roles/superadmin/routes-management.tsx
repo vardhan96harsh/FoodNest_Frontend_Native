@@ -119,45 +119,48 @@ const save = async () => {
 
   try {
     const token = await AsyncStorage.getItem("token");
-    const userId = await AsyncStorage.getItem("userId");
 
-    // Determine if we are editing an existing route or creating a new one
-    const url = editing ? `${API_BASE_URL}/api/routes/${editing.id}` : `${API_BASE_URL}/api/routes`; // Use editing.id if editing
-    const method = editing ? "PATCH" : "POST"; // Use PATCH for updating, POST for creating a new route
+    // Only send what backend expects
+    const requestBody = {
+      name: routeName.trim(),
+      region: region.trim(),
+      stops: stops.map((s, index) => ({
+        name: s.name,
+        lat: Number(s.lat) || null,
+        lng: Number(s.lng) || null,
+        order: index,
+      })),
+      description: "" // optional
+    };
+
+    const url = editing 
+      ? `${API_BASE_URL}/api/routes/${editing.id}` 
+      : `${API_BASE_URL}/api/routes`;
+    
+    const method = editing ? "PATCH" : "POST";
 
     const res = await fetch(url, {
-      method: method,  // Set the correct method (PATCH or POST)
+      method: method,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        "Authorization": `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        name: routeName.trim(),
-        region: region.trim(),
-        stops: stops.map((s) => ({
-          name: s.name,
-          lat: Number(s.lat),
-          lng: Number(s.lng),
-        })),
-        createdBy: userId,  // Optional: Only required if you're tracking the creator
-        rider: null,  // Adjust as necessary
-        supervisor: null,  // Adjust as necessary
-        refillCoordinator: null,  // Adjust as necessary
-        team: null  // Adjust as necessary
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await res.json();
 
-    if (data.ok) {
-      await loadRoutes();  // Reload the routes after creation or update
-      setOpen(false);  // Close the modal
-      resetForm();  // Reset the form after saving
+    if (res.ok && data.ok) {
+      await loadRoutes();
+      setOpen(false);
+      resetForm();
     } else {
       console.log("Error saving route:", data);
+      alert(data.error || "Failed to save route");
     }
   } catch (err) {
     console.log("Save route error:", err);
+    alert("An error occurred");
   }
 };
 

@@ -1,28 +1,58 @@
 // screens/MyInventory.tsx
-import React, { useMemo } from "react";
-import { ScrollView, View, Text, StyleSheet, Image, Pressable, Alert } from "react-native";
+import React, { useEffect, useState, useCallback } from "react";
+import { ScrollView, View, Text, StyleSheet, Image, Pressable, Alert, RefreshControl, ActivityIndicator } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import { api } from '@/lib/api';
 
-/* ---------- sample data (parity with your web MyInventory.tsx) ---------- */
-type InvItem = {
-  id: number;
+/* ---------- Types ---------- */
+type FoodItem = {
+  _id: string;
   name: string;
-  assigned: number;
-  sold: number;
-  remaining: number;
-  price: number; // THB
-  status: "good" | "low" | "critical";
-  image?: string;
+  price: number;
+  category: string;
+  imageUrl?: string;
 };
 
-const inventoryItems: InvItem[] = [
-  { id: 1, name: "Classic Burger", assigned: 20, sold: 12, remaining: 8, price: 8.99, status: "low", image: undefined },
-  { id: 2, name: "Poha",           assigned: 15, sold: 8,  remaining: 7, price: 6.5,  status: "good", image: undefined },
-  { id: 3, name: "Fish & Chips",   assigned: 10, sold: 6,  remaining: 4, price: 9.99, status: "critical", image: undefined },
-  { id: 4, name: "Caesar Salad",   assigned: 8,  sold: 3,  remaining: 5, price: 7.99, status: "good", image: undefined },
-];
+type InventoryItem = {
+  foodItem: FoodItem;
+  quantityAssigned: number;
+  quantityRemaining: number;
+  quantitySold: number;
+};
 
-/* ---------- tiny UI atoms ---------- */
+type Assignment = {
+  _id: string;
+  route: {
+    _id: string;
+    name: string;
+  };
+  inventory: InventoryItem[];
+  status: 'pending' | 'active' | 'completed';
+  date: string;
+};
+
+/* ---------- helpers ---------- */
+const tone = {
+  primary: "#2563eb",
+  success: "#059669",
+  warning: "#d97706",
+  destructive: "#dc2626",
+  gray: "#6b7280",
+} as const;
+
+const getStatus = (remaining: number, assigned: number): "critical" | "low" | "good" => {
+  const percentage = (remaining / assigned) * 100;
+  if (percentage <= 20) return "critical";
+  if (percentage <= 50) return "low";
+  return "good";
+};
+
+const statusColor = (status: "critical" | "low" | "good") =>
+  status === "critical" ? tone.destructive : status === "low" ? tone.warning : tone.success;
+
+const progressPct = (sold: number, assigned: number) => (sold / Math.max(assigned, 1)) * 100;
+
+/* ---------- Components ---------- */
 function Badge({
   text,
   variant = "outline",
@@ -48,45 +78,159 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-/* ---------- helpers ---------- */
-const tone = {
-  primary: "#2563eb",
-  success: "#059669",
-  warning: "#d97706",
-  destructive: "#dc2626",
-  gray: "#6b7280",
-} as const;
+function StatCell({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <View style={{ alignItems: "center", flex: 1 }}>
+      <Text style={styles.subtleSmall}>{label}</Text>
+      <Text style={[styles.statValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
+    </View>
+  );
+}
 
-const statusColor = (s: InvItem["status"]) =>
-  s === "critical" ? tone.destructive : s === "low" ? tone.warning : tone.success;
-
-const progressPct = (sold: number, assigned: number) => (sold / Math.max(assigned, 1)) * 100;
-const toINR = (thb: number) => `INR ${Math.round(thb * 2.5)}`;
-
-/* ---------- screen ---------- */
+/* ---------- Main Screen ---------- */
 export default function MyInventoryScreen() {
-  const totalRemainingValue = useMemo(
-    () => inventoryItems.reduce((sum, it) => sum + it.remaining * it.price, 0),
-    []
+  const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAssignment = useCallback(async () => {
+    try {
+      setError(null);
+      console.log("Fetching today's assignment for inventory...");
+      const response = await api.get('/api/rider/assignments/today');
+
+      if (response.ok && response.assignment) {
+        setAssignment(response.assignment);
+        console.log(`Loaded inventory with ${response.assignment.inventory?.length || 0} items`);
+      } else {
+        console.log("No assignment found for today");
+        setAssignment(null);
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch assignment:', err);
+      setError(err?.message || 'Failed to load inventory');
+      setAssignment(null);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAssignment();
+  }, [fetchAssignment]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchAssignment();
+  }, [fetchAssignment]);
+
+  // Calculate totals from real data
+  const inventoryItems = assignment?.inventory || [];
+  
+  const totalRemainingValue = inventoryItems.reduce(
+    (sum, item) => sum + (item.quantityRemaining * item.foodItem.price), 0
   );
-  const totalSalesValue = useMemo(
-    () => inventoryItems.reduce((sum, it) => sum + it.sold * it.price, 0),
-    []
+  
+  const totalSalesValue = inventoryItems.reduce(
+    (sum, item) => sum + (item.quantitySold * item.foodItem.price), 0
   );
-  const totalItemsLeft = useMemo(
-    () => inventoryItems.reduce((s, it) => s + it.remaining, 0),
-    []
+  
+  const totalItemsLeft = inventoryItems.reduce(
+    (sum, item) => sum + item.quantityRemaining, 0
+  );
+  
+  const totalAssigned = inventoryItems.reduce(
+    (sum, item) => sum + item.quantityAssigned, 0
+  );
+  
+  const totalSold = inventoryItems.reduce(
+    (sum, item) => sum + item.quantitySold, 0
   );
 
-  const critical = inventoryItems.filter(i => i.status === "critical");
-  const low = inventoryItems.filter(i => i.status === "low");
+  const criticalItems = inventoryItems.filter(
+    item => getStatus(item.quantityRemaining, item.quantityAssigned) === "critical"
+  );
+  
+  const lowItems = inventoryItems.filter(
+    item => getStatus(item.quantityRemaining, item.quantityAssigned) === "low"
+  );
+
+  const handleRequestMore = (itemName: string) => {
+    Alert.alert(
+      "Request More Stock",
+      `Would you like to request more ${itemName}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Request", 
+          onPress: () => Alert.alert("Request Sent", `Request for more ${itemName} has been sent to admin`) 
+        }
+      ]
+    );
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.page, { justifyContent: 'center', alignItems: 'center', flex: 1 }]}>
+        <ActivityIndicator size="large" color={tone.primary} />
+        <Text style={{ marginTop: 12, color: tone.gray }}>Loading inventory...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <ScrollView
+        contentContainerStyle={[styles.page, { flex: 1, justifyContent: 'center' }]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        <View style={styles.emptyState}>
+          <Feather name="alert-circle" size={60} color={tone.destructive} />
+          <Text style={styles.h1}>Error Loading Inventory</Text>
+          <Text style={styles.subtle}>{error}</Text>
+          <Pressable style={[styles.primaryBtn, { marginTop: 20 }]} onPress={onRefresh}>
+            <Text style={styles.primaryBtnText}>Try Again</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  if (!assignment || inventoryItems.length === 0) {
+    return (
+      <ScrollView
+        contentContainerStyle={[styles.page, { flex: 1, justifyContent: 'center' }]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        <View style={styles.emptyState}>
+          <Feather name="package" size={60} color={tone.gray} />
+          <Text style={styles.h1}>No Inventory</Text>
+          <Text style={styles.subtle}>
+            {!assignment 
+              ? "You don't have an active route today." 
+              : "No items have been assigned to you yet."}
+          </Text>
+          <Pressable style={[styles.primaryBtn, { marginTop: 20 }]} onPress={onRefresh}>
+            <Text style={styles.primaryBtnText}>Refresh</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView 
+      contentContainerStyle={styles.page}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       {/* Header */}
       <View>
         <Text style={styles.h1}>My Inventory</Text>
-        <Text style={styles.subtle}>Manage your cart's food inventory</Text>
+        <Text style={styles.subtle}>
+          {assignment.route?.name || 'Today\'s Route'} • {new Date(assignment.date).toLocaleDateString()}
+        </Text>
       </View>
 
       {/* Top stats (3 cards) */}
@@ -97,7 +241,7 @@ export default function MyInventoryScreen() {
             <Feather name="package" size={16} color={tone.primary} />
           </View>
           <Text style={[styles.statBig, { color: tone.primary }]}>
-            ฿{totalRemainingValue.toFixed(2)} <Text style={styles.inr}>{toINR(totalRemainingValue)}</Text>
+            ₹{totalRemainingValue.toFixed(2)}
           </Text>
           <Text style={styles.subtleSmall}>Current inventory value</Text>
         </View>
@@ -108,7 +252,7 @@ export default function MyInventoryScreen() {
             <Feather name="trending-up" size={16} color={tone.success} />
           </View>
           <Text style={[styles.statBig, { color: tone.success }]}>
-            ฿{totalSalesValue.toFixed(2)} <Text style={styles.inr}>{toINR(totalSalesValue)}</Text>
+            ₹{totalSalesValue.toFixed(2)}
           </Text>
           <Text style={styles.subtleSmall}>Value of items sold</Text>
         </View>
@@ -119,81 +263,80 @@ export default function MyInventoryScreen() {
             <Feather name="archive" size={16} color={tone.primary} />
           </View>
           <Text style={styles.statBig}>{totalItemsLeft}</Text>
-          <Text style={styles.subtleSmall}>Total items left</Text>
+          <Text style={styles.subtleSmall}>Out of {totalAssigned} total</Text>
         </View>
       </View>
 
-      {/* Item cards (two-column feel on wide screens, stacks on phone) */}
+      {/* Item cards */}
       <View style={{ gap: 12 }}>
-        {inventoryItems.map((item) => (
-          <View key={item.id} style={styles.card}>
-            {/* Header row */}
-            <View style={[styles.row, { alignItems: "center", gap: 12 }]}>
-              <View style={styles.thumb}>
-                {item.image ? (
-                  <Image source={{ uri: item.image }} style={{ width: "100%", height: "100%" }} />
-                ) : (
-                  <Feather name="image" size={20} color={tone.gray} />
-                )}
-              </View>
+        {inventoryItems.map((item, index) => {
+          const status = getStatus(item.quantityRemaining, item.quantityAssigned);
+          const remainingValue = item.quantityRemaining * item.foodItem.price;
+          
+          return (
+            <View key={item.foodItem._id || index} style={styles.card}>
+              {/* Header row */}
+              <View style={[styles.row, { alignItems: "center", gap: 12 }]}>
+                <View style={styles.thumb}>
+                  {item.foodItem.imageUrl ? (
+                    <Image source={{ uri: item.foodItem.imageUrl }} style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                  ) : (
+                    <Feather name="image" size={20} color={tone.gray} />
+                  )}
+                </View>
 
-              <View style={{ flex: 1 }}>
-                <View style={[styles.rowBetween, { alignItems: "center" }]}>
-                  <View>
-                    <Text style={styles.itemTitle}>{item.name}</Text>
-                    <Text style={styles.subtleSmall}>฿{item.price.toFixed(2)} each <Text style={styles.inr}>{toINR(item.price)}</Text></Text>
+                <View style={{ flex: 1 }}>
+                  <View style={[styles.rowBetween, { alignItems: "center" }]}>
+                    <View>
+                      <Text style={styles.itemTitle}>{item.foodItem.name}</Text>
+                      <Text style={styles.subtleSmall}>₹{item.foodItem.price} each</Text>
+                    </View>
+                    <Badge
+                      text={status}
+                      variant="outline"
+                      color={statusColor(status)}
+                    />
                   </View>
-                  <Badge
-                    text={item.status}
-                    variant="outline"
-                    color={statusColor(item.status)}
-                  />
                 </View>
               </View>
-            </View>
 
-            {/* Stats grid */}
-            <View style={styles.itemStatsGrid}>
-              <StatCell label="Assigned" value={`${item.assigned}`} />
-              <StatCell label="Sold" value={`${item.sold}`} valueColor={tone.success} />
-              <StatCell label="Remaining" value={`${item.remaining}`} valueColor={tone.primary} />
-            </View>
-
-            {/* Progress */}
-            <View style={{ marginTop: 8 }}>
-              <View style={[styles.rowBetween, { marginBottom: 6 }]}>
-                <Text style={styles.subtleSmall}>Sales Progress</Text>
-                <Text style={styles.subtleSmall}>{Math.round(progressPct(item.sold, item.assigned))}%</Text>
+              {/* Stats grid */}
+              <View style={styles.itemStatsGrid}>
+                <StatCell label="Assigned" value={`${item.quantityAssigned}`} />
+                <StatCell label="Sold" value={`${item.quantitySold}`} valueColor={tone.success} />
+                <StatCell label="Remaining" value={`${item.quantityRemaining}`} valueColor={tone.primary} />
               </View>
-              <ProgressBar value={progressPct(item.sold, item.assigned)} />
-            </View>
 
-            {/* Values */}
-            <View style={[styles.rowBetween, { marginTop: 10 }]}>
-              <Text style={styles.subtleSmall}>Remaining Value</Text>
-              <Text style={{ fontWeight: "700", color: "#111827" }}>
-                ฿{(item.remaining * item.price).toFixed(2)} <Text style={styles.inr}>{toINR(item.remaining * item.price)}</Text>
-              </Text>
-            </View>
-            <View style={[styles.rowBetween, { marginTop: 6 }]}>
-              <Text style={styles.subtleSmall}>Price per Item</Text>
-              <Text style={{ fontWeight: "700", color: "#111827" }}>
-                ฿{item.price.toFixed(2)} <Text style={styles.inr}>{toINR(item.price)}</Text>
-              </Text>
-            </View>
+              {/* Progress */}
+              <View style={{ marginTop: 8 }}>
+                <View style={[styles.rowBetween, { marginBottom: 6 }]}>
+                  <Text style={styles.subtleSmall}>Sales Progress</Text>
+                  <Text style={styles.subtleSmall}>{Math.round(progressPct(item.quantitySold, item.quantityAssigned))}%</Text>
+                </View>
+                <ProgressBar value={progressPct(item.quantitySold, item.quantityAssigned)} />
+              </View>
 
-            {/* Request More */}
-            {item.remaining <= 3 && (
-              <Pressable
-                onPress={() => Alert.alert("Request More", `Ask cook for more ${item.name}`)}
-                style={({ pressed }) => [styles.ghostBtn, { marginTop: 10 }, pressed && { opacity: 0.9 }]}
-              >
-                <Feather name="plus" size={14} style={{ marginRight: 6 }} />
-                <Text style={styles.ghostBtnText}>Request More</Text>
-              </Pressable>
-            )}
-          </View>
-        ))}
+              {/* Values */}
+              <View style={[styles.rowBetween, { marginTop: 10 }]}>
+                <Text style={styles.subtleSmall}>Remaining Value</Text>
+                <Text style={{ fontWeight: "700", color: "#111827" }}>
+                  ₹{remainingValue.toFixed(2)}
+                </Text>
+              </View>
+
+              {/* Request More */}
+              {item.quantityRemaining <= Math.ceil(item.quantityAssigned * 0.2) && (
+                <Pressable
+                  onPress={() => handleRequestMore(item.foodItem.name)}
+                  style={({ pressed }) => [styles.ghostBtn, { marginTop: 10 }, pressed && { opacity: 0.9 }]}
+                >
+                  <Feather name="plus" size={14} style={{ marginRight: 6 }} />
+                  <Text style={styles.ghostBtnText}>Request More Stock</Text>
+                </Pressable>
+              )}
+            </View>
+          );
+        })}
       </View>
 
       {/* Summary card */}
@@ -202,34 +345,55 @@ export default function MyInventoryScreen() {
         <Text style={styles.subtle}>Overall inventory status & recommendations</Text>
 
         <View style={styles.summaryGrid}>
-          {/* Critical */}
+          {/* Critical Items */}
           <View style={{ flex: 1 }}>
-            <Text style={styles.summaryTitle}>Critical Items</Text>
-            {critical.length === 0 ? (
+            <Text style={styles.summaryTitle}>Critical Items ({criticalItems.length})</Text>
+            {criticalItems.length === 0 ? (
               <Text style={styles.subtleSmall}>None</Text>
             ) : (
-              critical.map((it) => (
-                <View key={it.id} style={[styles.summaryRow, { backgroundColor: "rgba(220,38,38,0.08)", borderColor: "rgba(220,38,38,0.25)" }]}>
-                  <Text style={styles.summaryItem}>{it.name}</Text>
-                  <Badge text={`${it.remaining} left`} variant="solid" color={tone.destructive} />
+              criticalItems.map((item) => (
+                <View key={item.foodItem._id} style={[styles.summaryRow, { backgroundColor: "rgba(220,38,38,0.08)", borderColor: "rgba(220,38,38,0.25)" }]}>
+                  <Text style={styles.summaryItem}>{item.foodItem.name}</Text>
+                  <Badge text={`${item.quantityRemaining} left`} variant="solid" color={tone.destructive} />
                 </View>
               ))
             )}
           </View>
 
-          {/* Low */}
+          {/* Low Stock Items */}
           <View style={{ flex: 1 }}>
-            <Text style={styles.summaryTitle}>Low Stock Items</Text>
-            {low.length === 0 ? (
+            <Text style={styles.summaryTitle}>Low Stock Items ({lowItems.length})</Text>
+            {lowItems.length === 0 ? (
               <Text style={styles.subtleSmall}>None</Text>
             ) : (
-              low.map((it) => (
-                <View key={it.id} style={[styles.summaryRow, { backgroundColor: "rgba(217,119,6,0.08)", borderColor: "rgba(217,119,6,0.25)" }]}>
-                  <Text style={styles.summaryItem}>{it.name}</Text>
-                  <Badge text={`${it.remaining} left`} variant="solid" color={tone.warning} />
+              lowItems.map((item) => (
+                <View key={item.foodItem._id} style={[styles.summaryRow, { backgroundColor: "rgba(217,119,6,0.08)", borderColor: "rgba(217,119,6,0.25)" }]}>
+                  <Text style={styles.summaryItem}>{item.foodItem.name}</Text>
+                  <Badge text={`${item.quantityRemaining} left`} variant="solid" color={tone.warning} />
                 </View>
               ))
             )}
+          </View>
+        </View>
+
+        {/* Performance Summary */}
+        <View style={styles.performanceSummary}>
+          <Text style={styles.summaryTitle}>Performance</Text>
+          <View style={styles.performanceRow}>
+            <Text style={styles.subtleSmall}>Total Items Sold:</Text>
+            <Text style={styles.performanceValue}>{totalSold} / {totalAssigned}</Text>
+          </View>
+          <View style={styles.performanceRow}>
+            <Text style={styles.subtleSmall}>Sales Rate:</Text>
+            <Text style={[styles.performanceValue, { color: tone.success }]}>
+              {Math.round((totalSold / totalAssigned) * 100)}%
+            </Text>
+          </View>
+          <View style={styles.performanceRow}>
+            <Text style={styles.subtleSmall}>Total Revenue:</Text>
+            <Text style={[styles.performanceValue, { color: tone.success }]}>
+              ₹{totalSalesValue.toFixed(2)}
+            </Text>
           </View>
         </View>
       </View>
@@ -237,17 +401,7 @@ export default function MyInventoryScreen() {
   );
 }
 
-/* ---------- small subcomponent ---------- */
-function StatCell({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <View style={{ alignItems: "center", flex: 1 }}>
-      <Text style={styles.subtleSmall}>{label}</Text>
-      <Text style={[styles.statValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
-    </View>
-  );
-}
-
-/* ---------- styles (aligned with your other screens) ---------- */
+/* ---------- styles ---------- */
 const styles = StyleSheet.create({
   page: { padding: 16, gap: 16, paddingBottom: 32, backgroundColor: "#f9fafb" },
 
@@ -289,6 +443,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#f3f4f6",
+    overflow: "hidden",
   },
   itemTitle: { fontWeight: "800", color: "#111827", fontSize: 15 },
   itemStatsGrid: {
@@ -333,11 +488,29 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   summaryItem: { fontSize: 13, color: "#111827", fontWeight: "600" },
+  performanceSummary: {
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#eef1f5",
+  },
+  performanceRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  performanceValue: {
+    fontWeight: "700",
+    color: "#111827",
+    fontSize: 14,
+  },
 
   /* ghost button */
   ghostBtn: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: "#e5e7eb",
     backgroundColor: "#fff",
@@ -346,4 +519,21 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   ghostBtnText: { color: "#111827", fontWeight: "800", fontSize: 12 },
+  
+  /* primary button */
+  primaryBtn: {
+    backgroundColor: tone.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  primaryBtnText: { color: "#fff", fontWeight: "700" },
+
+  /* empty state */
+  emptyState: {
+    alignItems: "center",
+    gap: 12,
+    padding: 20,
+  },
 });

@@ -145,43 +145,39 @@ export default function TeamManagement() {
     setOpen(true);
   };
 
+  const handleDelete = async (team: ApiTeam) => {
+    Alert.alert(
+      "Confirm Delete",
+      `Are you sure you want to delete team "${team.name}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setDeleteLoading(team._id);
+              const response = await api.delete(`/api/admin/teams/${team._id}`);
+              
+              if (response?.status === 200 || response?.status === 204 || response?.data?.success) {
+                setTeams(current => current.filter(t => t._id !== team._id));
+                Alert.alert("Success", "Team deleted successfully");
+              } else {
+                throw new Error("Delete failed");
+              }
+            } catch (error) {
+              console.log("Delete error:", error);
+              Alert.alert("Error", "Failed to delete team");
+              await loadTeams();
+            } finally {
+              setDeleteLoading(null);
+            }
+          }
+        }
+      ]
+    );
+  };
 
-
-const handleDelete = async (team: ApiTeam) => {
-  try {
-    setDeleteLoading(team._id);
-    
-    console.log("1. Sending delete for:", team._id);
-    const response = await api.delete(`/api/admin/teams/${team._id}`);
-    console.log("2. Raw response:", response);
-    console.log("3. Response type:", typeof response);
-    console.log("4. Response keys:", Object.keys(response));
-    
-    // Check if delete was successful
-    if (response?.status === 200 || response?.status === 204 || response?.data?.success) {
-      console.log("5. Delete successful");
-      
-      // Update UI
-      setTeams(current => {
-        const filtered = current.filter(t => t._id !== team._id);
-        console.log("6. Teams after filter:", filtered.length);
-        return filtered;
-      });
-      
-      Alert.alert("Success", "Team deleted");
-    } else {
-      throw new Error("Delete failed");
-    }
-    
-  } catch (error) {
-    console.log("Delete error:", error);
-    Alert.alert("Error", "Failed to delete team");
-    // Reload to ensure UI matches server
-    await loadTeams();
-  } finally {
-    setDeleteLoading(null);
-  }
-};
   // -----------------------------------------------------------
   // LOAD TEAMS
   // -----------------------------------------------------------
@@ -244,90 +240,83 @@ const handleDelete = async (team: ApiTeam) => {
     return assigned;
   };
 
-// -----------------------------------------------------------
-// LOAD USERS / VEHICLES / BATTERIES / ROUTES
-// -----------------------------------------------------------
-const loadOptions = async () => {
-  try {
-    const [sup, rid, cook, refCor, vehicles, batteries, routesRes] = await Promise.all([
-      api.get("/api/admin/users?role=supervisor"),
-      api.get("/api/admin/users?role=rider"),
-      api.get("/api/admin/users?role=cook"),
-      api.get("/api/admin/users?role=refill"),
-      api.get("/api/vehicles"),
-      api.get("/api/batteries"),
-      api.get("/api/admin/routes/list"),
-    ]);
+  // -----------------------------------------------------------
+  // LOAD USERS / VEHICLES / BATTERIES / ROUTES
+  // -----------------------------------------------------------
+  const loadOptions = async () => {
+    try {
+      const [sup, rid, cook, refCor, vehicles, batteries, routesRes] = await Promise.all([
+        api.get("/api/admin/users?role=supervisor"),
+        api.get("/api/admin/users?role=rider"),
+        api.get("/api/admin/users?role=cook"),
+        api.get("/api/admin/users?role=refill"),
+        api.get("/api/vehicles"),
+        api.get("/api/batteries"),
+        api.get("/api/admin/routes/list"),
+      ]);
 
-    // normalize
-    let supList = normalizeUsers(sup);
-    let ridList = normalizeUsers(rid);
-    let cookList = normalizeUsers(cook);
-    let refillList = normalizeUsers(refCor);
-    let vehicleList = normalizeVehicles(vehicles);
-    let batteryList = normalizeBatteries(batteries);
-    let routeList = normalizeRoutes(routesRes);
+      // normalize
+      let supList = normalizeUsers(sup);
+      let ridList = normalizeUsers(rid);
+      let cookList = normalizeUsers(cook);
+      let refillList = normalizeUsers(refCor);
+      let vehicleList = normalizeVehicles(vehicles);
+      let batteryList = normalizeBatteries(batteries);
+      let routeList = normalizeRoutes(routesRes);
 
-    // filter items already assigned (EXCEPT ROUTES - they can be shared)
-    const assigned = getAssignedIds();
+      // filter items already assigned (EXCEPT ROUTES - they can be shared)
+      const assigned = getAssignedIds();
 
-    supList = supList.filter(
-      (p) => !assigned.supervisors.has(p.id) || selSupIds.includes(p.id)
-    );
+      supList = supList.filter(
+        (p) => !assigned.supervisors.has(p.id) || selSupIds.includes(p.id)
+      );
 
-    ridList = ridList.filter(
-      (p) => !assigned.riders.has(p.id) || selRidIds.includes(p.id)
-    );
+      ridList = ridList.filter(
+        (p) => !assigned.riders.has(p.id) || selRidIds.includes(p.id)
+      );
 
-    cookList = cookList.filter(
-      (p) => !assigned.cooks.has(p.id) || selCookIds.includes(p.id)
-    );
+      cookList = cookList.filter(
+        (p) => !assigned.cooks.has(p.id) || selCookIds.includes(p.id)
+      );
 
-    refillList = refillList.filter(
-      (p) =>
-        !assigned.refillCoordinators.has(p.id) ||
-        selRefillCorIds.includes(p.id)
-    );
+      refillList = refillList.filter(
+        (p) =>
+          !assigned.refillCoordinators.has(p.id) ||
+          selRefillCorIds.includes(p.id)
+      );
 
-    vehicleList = vehicleList.filter(
-      (p) => !assigned.vehicles.has(p.id) || selVehicleIds.includes(p.id)
-    );
+      vehicleList = vehicleList.filter(
+        (p) => !assigned.vehicles.has(p.id) || selVehicleIds.includes(p.id)
+      );
 
-    batteryList = batteryList.filter(
-      (p) => !assigned.batteries.has(p.id) || selBatteryIds.includes(p.id)
-    );
+      batteryList = batteryList.filter(
+        (p) => !assigned.batteries.has(p.id) || selBatteryIds.includes(p.id)
+      );
 
-    // ROUTES: No filtering - they can be shared between teams
-    // routeList = routeList.filter(
-    //   (p) => !assigned.routes.has(p.id) || selRouteIds.includes(p.id)
-    // );
-
-    // update UI options
-    setSupOptions(supList);
-    setRiderOptions(ridList);
-    setCookOptions(cookList);
-    setRefillCorOptions(refillList);
-    setVehicleOptions(vehicleList);
-    setBatteryOptions(batteryList);
-    setRouteOptions(routeList); // All routes shown, no filtering
-  } catch (e) {
-    console.error("Load options error:", e);
-    Alert.alert("Error", "Failed to load dropdown options");
-  }
-};
+      // update UI options
+      setSupOptions(supList);
+      setRiderOptions(ridList);
+      setCookOptions(cookList);
+      setRefillCorOptions(refillList);
+      setVehicleOptions(vehicleList);
+      setBatteryOptions(batteryList);
+      setRouteOptions(routeList);
+    } catch (e) {
+      console.error("Load options error:", e);
+      Alert.alert("Error", "Failed to load dropdown options");
+    }
+  };
 
   // -----------------------------------------------------------
-  // SUBMIT FORM (WITH ROUTES)
+  // SUBMIT FORM
   // -----------------------------------------------------------
   const submit = async () => {
     try {
-      // Validate team name
       if (!teamName.trim()) {
         Alert.alert("Error", "Team name is required");
         return;
       }
 
-      // Filter out any empty or invalid IDs
       const validSupIds = selSupIds.filter(id => id && id.length > 0);
       const validRidIds = selRidIds.filter(id => id && id.length > 0);
       const validCookIds = selCookIds.filter(id => id && id.length > 0);
@@ -347,8 +336,6 @@ const loadOptions = async () => {
         routes: validRouteIds,
       };
 
-      console.log("Submitting payload:", JSON.stringify(payload, null, 2));
-
       if (editingTeam) {
         await api.patch(`/api/admin/teams/${editingTeam._id}`, payload);
         Alert.alert("Success", "Team updated successfully");
@@ -359,7 +346,8 @@ const loadOptions = async () => {
 
       setOpen(false);
       resetForm();
-      loadTeams();
+      await loadTeams();
+      await loadOptions();
     } catch (e: any) {
       console.error("Submission error:", e);
       Alert.alert("Error", e.message || "Failed to save team");
@@ -369,8 +357,6 @@ const loadOptions = async () => {
   useEffect(() => {
     if (loaded) return;
     setLoaded(true);
-
-    // Load teams first, then filter options
     loadTeams().then(() => {
       loadOptions();
     });
@@ -559,9 +545,6 @@ const loadOptions = async () => {
   );
 }
 
-// -----------------------------------------------------------
-// TEAM SECTION UI
-// -----------------------------------------------------------
 function TeamSection({
   title,
   data,
@@ -580,9 +563,9 @@ function TeamSection({
       <View
         style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}
       >
-        {data.map((m, i) => (
+        {data.map((m) => (
           <View
-            key={i}
+            key={m.id}
             style={{
               backgroundColor: color,
               paddingHorizontal: 10,
